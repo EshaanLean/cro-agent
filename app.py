@@ -6,16 +6,12 @@ from flask import Flask, request, render_template_string, send_file
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import google.generativeai as genai
 from PIL import Image
-import time
 
 # -- API KEY SETUP (use Render env vars for prod!) --
-import os
-
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     raise ValueError("GEMINI_API_KEY env var not set! Add it on Render.com dashboard.")
 genai.configure(api_key=API_KEY)
-
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = "manual_screenshots"
@@ -241,4 +237,5 @@ def download_csv():
     return send_file(path, as_attachment=True, download_name="competitive_analysis_data.csv")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
