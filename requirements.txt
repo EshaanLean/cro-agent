@@ -1,0 +1,5 @@
+flask
+pandas
+pillow
+google-generativeai
+playwright
