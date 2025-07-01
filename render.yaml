@@ -1,7 +1,12 @@
+# render.yaml
 services:
   - type: web
-    name: landing-page-analyzer
+    name: cro-agent
     env: python
-    buildCommand: "pip install -r requirements.txt && playwright install chromium"
-    startCommand: "python app.py"
-    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      playwright install chromium
+    startCommand: python app.py
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false

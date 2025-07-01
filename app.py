@@ -236,6 +236,8 @@ def download_csv():
         return "No file available", 404
     return send_file(path, as_attachment=True, download_name="competitive_analysis_data.csv")
 
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 10000))  # Use $PORT if set (Render), else default to 10000 for local dev
+    # host="0.0.0.0" makes your app accessible externally
     app.run(host="0.0.0.0", port=port)
