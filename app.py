@@ -169,17 +169,27 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                 # Automated Playwright logic
                 page = context.new_page()
                 try:
+                    # Wait longer for the page to fully load
                     page.goto(lp["url"], wait_until="domcontentloaded", timeout=120000)
-                    page.wait_for_timeout(10000)
+                    page.wait_for_timeout(20000)  # Wait 20 seconds for slow pages
+
+                    # Take the screenshot, but with a bigger timeout (120s)
                     screenshot_path = os.path.join(output_dir, f"{lp['name']}_fullpage.png")
-                    page.screenshot(path=screenshot_path, full_page=True)
+                    page.screenshot(path=screenshot_path, full_page=True, timeout=120000)
+
                     with open(screenshot_path, "rb") as f:
                         image_bytes = f.read()
                     page_content = page.inner_text('body')
-                    structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
+                    structured_data = get_multimodal_analysis_from_gemini(
+                        page_content, image_bytes, lp['name'], lp['url'], prompt_override
+                    )
                     all_course_data.append(structured_data)
                 except Exception as e:
-                    all_course_data.append({"Platform": lp['name'], "error": str(e)})
+                    all_course_data.append({
+                        "Platform": lp['name'],
+                        "URL": lp['url'],
+                        "error": str(e)
+                    })
                 finally:
                     page.close()
         browser.close()
