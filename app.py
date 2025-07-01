@@ -238,6 +238,6 @@ def download_csv():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Use $PORT if set (Render), else default to 10000 for local dev
-    # host="0.0.0.0" makes your app accessible externally
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
