@@ -42,7 +42,49 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 flushprint("UPLOAD_FOLDER checked/created")
 
 # ------------- HTML TEMPLATE (no changes) --------------------
-HTML = """...""" # (keep your original HTML)
+HTML = HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Landing Page Analyzer (Gemini + Playwright)</title>
+  <style>
+    body { font-family: Arial; margin: 2em; }
+    .container { max-width: 720px; margin: auto; }
+    textarea, input[type=text] { width: 100%; }
+    .file-upload { margin-bottom: 1em; }
+    label { font-weight: bold; }
+    .result { background: #f5f5f5; padding: 1em; margin-top: 1em; border-radius: 8px; }
+    .error { color: red; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Landing Page Analyzer (Gemini + Playwright)</h1>
+  <form method="POST" enctype="multipart/form-data">
+    <label>Landing Page URLs (one per line):</label>
+    <textarea name="urls" rows="6" required>{{urls or ""}}</textarea><br><br>
+    <label>Prompt for Gemini:</label>
+    <textarea name="prompt" rows="4" required>{{prompt or default_prompt}}</textarea><br><br>
+    <label>Manual Screenshot Uploads:</label>
+    <div class="file-upload">
+      <input type="file" name="screenshots" multiple>
+      <small>For protected sites (Brainstation, Udemy, etc) upload PNGs. Name file as &lt;name&gt;_manual.png (e.g. udemy_manual.png).</small>
+    </div>
+    <button type="submit">Run Analysis</button>
+  </form>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if summary %}
+    <div class="result">
+      <h2>Analysis Summary:</h2>
+      <pre>{{summary}}</pre>
+      <a href="/download/csv">Download CSV</a>
+    </div>
+  {% endif %}
+</div>
+</body>
+</html>
+"""
+
 
 # -- Utility: save uploads to manual_screenshots folder --
 def save_manual_screenshots(files):
