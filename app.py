@@ -170,7 +170,7 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                 page = context.new_page()
                 try:
                     # Wait longer for the page to fully load
-                    page.goto(lp["url"], wait_until="domcontentloaded", timeout=120000)
+                    page.goto(lp["url"], wait_until="networkidle", timeout=120000)
                     page.wait_for_timeout(20000)  # Wait 20 seconds for slow pages
 
                     # Take the screenshot, but with a bigger timeout (120s)
