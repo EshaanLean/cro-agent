@@ -3,6 +3,7 @@ import io
 import json
 import sys
 import pandas as pd
+import re
 from flask import Flask, request, render_template_string, send_file
 
 # --- Flushed print utility ---
@@ -130,12 +131,40 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
 
         flushprint("Sending prompt to Gemini")
         response = model.generate_content([prompt, image_for_api])
-        cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
-        flushprint("Gemini responded. JSON parsed.")
-        return json.loads(cleaned_json)
+        raw_response = getattr(response, 'text', None)
+        if not raw_response:
+            flushprint("Gemini returned empty response or missing .text attribute!")
+            raise ValueError("Gemini returned empty response or missing .text attribute!")
+
+        cleaned_json = raw_response.strip().replace("```json", "").replace("```", "")
+        flushprint("Gemini responded. Raw snippet:\n", cleaned_json[:400])
+
+        # Optionally, dump the full response to a file for debugging
+        try:
+            with open("last_gemini_response.txt", "w", encoding="utf-8") as f:
+                f.write(cleaned_json)
+        except Exception as dump_err:
+            flushprint("Could not write Gemini response to file:", dump_err)
+
+        # Try extracting the first {...} block (for safety)
+        matches = re.findall(r'\{.*\}', cleaned_json, re.DOTALL)
+        if matches:
+            cleaned_json = matches[0]
+
+        # Try parsing JSON, print details if it fails
+        try:
+            parsed = json.loads(cleaned_json)
+            flushprint("JSON parsed OK")
+            return parsed
+        except json.JSONDecodeError as je:
+            flushprint("JSON decode error:", je)
+            flushprint("Gemini response was:\n", cleaned_json)
+            raise ValueError(f"Gemini response was not valid JSON: {je}\nResponse:\n{cleaned_json}")
+
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
         raise
+
 
 # -- Main analyzer function (mixes manual+auto) --
 def analyze_landing_pages(landing_pages, prompt_override=None):
