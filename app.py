@@ -141,12 +141,10 @@ HTML = """
       btn.parentElement.remove();
     }
     window.onload = function() {
-      // Attach handlers for existing rows in case of rerender
       let selects = document.getElementsByName("modes");
       let fileInputs = document.getElementsByClassName("screenshot-input");
       for (let i = 0; i < selects.length; ++i) {
         selects[i].onchange = function() { toggleManual(this, i); };
-        // Hide file inputs for auto rows
         if (selects[i].value !== "manual") {
           fileInputs[i].classList.add('hide');
         }
@@ -237,7 +235,6 @@ def get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name
             prompt_text_section=prompt_text_section
         )
         response = model.generate_content([prompt, image_for_api])
-        # Try to extract JSON:
         cleaned = response.text.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:]
@@ -306,21 +303,22 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
 def index():
     summary = None
     error = None
-    csv_path = None
-
-    # ---- INITIALIZE ENTRIES ----
-    entries = []
     prompt = ''
+    entries = []
 
     if request.method == "POST":
         urls = request.form.getlist("urls")
         modes = request.form.getlist("modes")
-        prompt = request.form.get("prompt")
+        prompt = request.form.get("prompt") or RAW_DEFAULT_PROMPT.strip()
         uploaded_files = request.files
         save_manual_screenshots(uploaded_files)
-
         landing_pages = []
-        for url, mode in zip(urls, modes):
+        entries = []
+        for i, url in enumerate(urls):
+            url = url.strip()
+            if not url:
+                continue
+            mode = modes[i] if i < len(modes) else "auto"
             base_name = url.split("//")[-1].split("/")[1] if "/" in url.split("//")[-1] else url.split("//")[-1]
             name = base_name.lower().replace(".", "_").replace("-", "_")
             is_manual = (mode == "manual")
@@ -338,7 +336,6 @@ def index():
         except Exception as e:
             error = str(e)
     else:
-        # Initial: single empty row
         entries = [{"url": "", "manual": False}]
 
     return render_template_string(
