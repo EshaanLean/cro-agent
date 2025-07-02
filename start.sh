@@ -1,8 +1,3 @@
 #!/bin/bash
-set -e
-
-# Install Playwright browsers if not already installed
-playwright install --with-deps
-
-# Start your app
+playwright install chromium
 python app.py
