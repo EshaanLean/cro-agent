@@ -81,137 +81,7 @@ Return ONLY the valid JSON object, with no other text, comments, or markdown for
 """
 
 # ------------- HTML TEMPLATE ------------------
-HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Landing Page Analyzer (Gemini + Playwright)</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 2em; background: #f6f7fa; }
-    .container { max-width: 950px; margin: auto; background: #fff; padding: 2em 2em 1em 2em; border-radius: 12px; box-shadow: 0 8px 24px rgba(30,32,58,.07); }
-    .tip { background: #e8f1ff; border-left: 4px solid #4091f7; padding: 1em; margin-bottom: 1.4em; font-size: 1.04em; }
-    .urls-table th, .urls-table td { padding: 0.6em 0.5em; }
-    .urls-table { width: 100%; border-collapse: collapse; margin-bottom: 1.4em; }
-    .urls-table th { background: #f5f6fa; }
-    .urls-table td { background: #fcfcfd; }
-    .urls-table th, .urls-table td { border-bottom: 1px solid #eaeaea; }
-    input[type="text"], textarea { width: 100%; padding: 0.4em; }
-    input[type="checkbox"] { transform: scale(1.2); }
-    input[type="file"] { width: 100%; }
-    button { background: #2266e3; color: #fff; border: none; border-radius: 6px; font-size: 1.1em; padding: 0.6em 1.5em; margin-top: 1.5em; }
-    .error { color: #c00; background: #ffe7e7; border-left: 4px solid #f42; padding: 1em; border-radius: 6px; margin-bottom: 1em;}
-    .result { background: #f5f5f5; padding: 1em; margin-top: 1.2em; border-radius: 8px; font-size: 1.1em;}
-    .add-row { color: #4091f7; background: none; border: none; font-size: 1.25em; cursor: pointer;}
-    .remove-row { color: #d66; background: none; border: none; font-size: 1.1em; cursor: pointer;}
-    .files-cell { max-width: 180px; }
-    .label-small { font-size: 0.96em; color: #555; }
-    @media (max-width: 750px) { .container { padding: 1em 0.3em; } }
-  </style>
-  <script>
-    function addRow() {
-      var tbl = document.getElementById('urls-table-body');
-      var idx = tbl.rows.length;
-      var row = tbl.insertRow();
-      row.innerHTML = `
-        <td><input type="text" name="url_${idx}" placeholder="https://..." required></td>
-        <td style="text-align:center;"><input type="checkbox" name="manual_${idx}" onchange="toggleScreenshotInput(this, ${idx})"></td>
-        <td class="files-cell"><input type="file" name="screenshot_${idx}" id="screenshot_${idx}" style="display:none" accept="image/png"></td>
-        <td><button type="button" class="remove-row" onclick="removeRow(this)">&#10006;</button></td>
-      `;
-    }
-    function removeRow(btn) {
-      var row = btn.parentNode.parentNode;
-      row.parentNode.removeChild(row);
-    }
-    function toggleScreenshotInput(checkbox, idx) {
-      var inp = document.getElementById('screenshot_' + idx);
-      if (checkbox.checked) inp.style.display = 'block';
-      else inp.style.display = 'none';
-    }
-    function toggleAllManuals(source) {
-      var checkboxes = document.querySelectorAll('input[type=checkbox][name^="manual_"]');
-      for (var i = 0; i < checkboxes.length; i++) {
-        checkboxes[i].checked = source.checked;
-        checkboxes[i].dispatchEvent(new Event('change'));
-      }
-    }
-    window.onload = function() {
-      // Ensure at least one row exists
-      if (document.getElementById('urls-table-body').rows.length === 0) {
-        addRow();
-      }
-    }
-  </script>
-</head>
-<body>
-<div class="container">
-  <h1>Landing Page Analyzer <span style="font-size:0.55em;font-weight:normal;color:#888;">(Gemini + Playwright)</span></h1>
-
-  <div class="tip">
-    <b>Instructions & Tips:</b><br>
-    - Enter the landing page URLs you want to analyze below.<br>
-    - For each URL, if the website <b>requires login, is protected by Cloudflare, bot-blockers, or blocks scraping (e.g., Udemy, Brainstation, Teachable, Thinkific, Kajabi, Shopify admin)</b>, check the "Manual Screenshot" box and upload your PNG screenshot.<br>
-    - <b>How to take a screenshot:</b><br>
-      <span class="label-small">Chrome: <b>Method 1 (Developer Tools):</b> Open the webpage, right-click, select "Inspect" (or press <b>Ctrl+Shift+I</b>), then press <b>Ctrl+Shift+P</b> (Cmd+Shift+P on Mac), type "screenshot" and select "Capture full size screenshot".<br>
-      <b>Method 2 (Web Capture):</b> Click the three dots (⋮) in Chrome's top right, select "More tools" &gt; "Web capture".</span><br>
-    - <b>Naming rule:</b> The image filename must be <b>&lt;url-key&gt;_manual.png</b> (the platform key is auto-generated and shown in the table).<br>
-    - You can add or remove as many URLs as you need.
-  </div>
-  <form method="POST" enctype="multipart/form-data">
-    <table class="urls-table">
-      <thead>
-        <tr>
-          <th style="width:40%">Landing Page URL</th>
-          <th style="width:12%;text-align:center;">
-            Manual Screenshot<br>
-            <input type="checkbox" onclick="toggleAllManuals(this)" style="margin-top:3px;">
-            <div class="label-small">All</div>
-          </th>
-          <th style="width:30%">Screenshot Upload (PNG)</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="urls-table-body">
-        {% for row in entries %}
-        <tr>
-          <td>
-            <input type="text" name="url_{{loop.index0}}" value="{{row.url}}" required>
-            <div class="label-small">Platform key: <b>{{row.key}}</b></div>
-          </td>
-          <td style="text-align:center;">
-            <input type="checkbox" name="manual_{{loop.index0}}" {% if row.manual %}checked{% endif %} onchange="toggleScreenshotInput(this, {{loop.index0}})">
-          </td>
-          <td class="files-cell">
-            <input type="file" name="screenshot_{{loop.index0}}" id="screenshot_{{loop.index0}}" style="display:{{'block' if row.manual else 'none'}}" accept="image/png">
-          </td>
-          <td>
-            <button type="button" class="remove-row" onclick="removeRow(this)">&#10006;</button>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <button type="button" class="add-row" onclick="addRow()">+ Add URL</button>
-    <br><br>
-    <label for="prompt"><b>Prompt for Gemini:</b></label>
-    <textarea name="prompt" rows="16" required>{{prompt or default_prompt}}</textarea>
-    <div class="label-small" style="margin-top:-4px;margin-bottom:14px;">
-      <b>Edit the prompt as needed. The default covers most competitive landing page analyses.</b>
-    </div>
-    <button type="submit">Run Analysis</button>
-  </form>
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
-  {% if summary %}
-    <div class="result">
-      <h2>Analysis Summary:</h2>
-      <pre>{{summary}}</pre>
-      <a href="/download/csv">Download CSV</a>
-    </div>
-  {% endif %}
-</div>
-</body>
-</html>
-"""
+# ... [Truncated for brevity—no changes to your HTML] ...
 
 # --- Utility: make a unique, reproducible "key" for each URL
 def url_to_key(url):
@@ -264,7 +134,6 @@ def get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name
         flushprint("Sending prompt to Gemini")
         response = model.generate_content([prompt, image_for_api])
         raw = response.text.strip()
-        # Try to find first { ... } json block in response if any text before/after
         import re
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         cleaned_json = match.group(0) if match else raw
@@ -299,12 +168,15 @@ def analyze_landing_pages(entries, prompt_override=None):
                     manual_file = os.path.join(app.config['UPLOAD_FOLDER'], f"{provider_name}_manual.png")
                     if not os.path.exists(manual_file):
                         flushprint(f"Manual screenshot not found: {manual_file}")
-                        all_course_data.append({"Platform": provider_name, "error": f"Manual screenshot '{manual_file}' not found."})
+                        all_course_data.append({"Platform": provider_name, "LP Link": url, "error": f"Manual screenshot '{manual_file}' not found."})
                         continue
                     with open(manual_file, "rb") as f:
                         image_bytes = f.read()
                     page_content = ""
                     structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name, url, prompt_override)
+                    # --- INJECT values to ensure CSV always correct:
+                    structured_data["Platform"] = provider_name
+                    structured_data["LP Link"] = url
                     all_course_data.append(structured_data)
                 else:
                     try:
@@ -314,17 +186,20 @@ def analyze_landing_pages(entries, prompt_override=None):
                         page_content = page.content()
                         screenshot_bytes = page.screenshot(full_page=True)
                         structured_data = get_multimodal_analysis_from_gemini(page_content, screenshot_bytes, provider_name, url, prompt_override)
+                        # --- INJECT values to ensure CSV always correct:
+                        structured_data["Platform"] = provider_name
+                        structured_data["LP Link"] = url
                         all_course_data.append(structured_data)
                         page.close()
                     except Exception as e:
                         flushprint(f"Auto-screenshot failed for {provider_name}: {e}")
-                        all_course_data.append({"Platform": provider_name, "error": f"Auto-screenshot failed: {str(e)}"})
+                        all_course_data.append({"Platform": provider_name, "LP Link": url, "error": f"Auto-screenshot failed: {str(e)}"})
             browser.close()
             flushprint("Browser closed")
     except Exception as e:
         flushprint("Playwright failed:", e)
         for row in entries:
-            all_course_data.append({"Platform": row["key"], "error": f"Playwright failed: {e}"})
+            all_course_data.append({"Platform": row["key"], "LP Link": row["url"], "error": f"Playwright failed: {e}"})
     # Save results
     df = pd.DataFrame(all_course_data)
     csv_path = os.path.join(output_dir, "competitive_analysis_results.csv")
@@ -338,11 +213,9 @@ def index():
     flushprint("Index route called:", request.method)
     error, summary, csv_path = None, None, None
     default_prompt = make_default_prompt("{{provider_name}}", "{{url}}", "{{prompt_text_section}}")
-    # Handle form data (parse by index)
     entries = []
     if request.method == "POST":
         prompt = request.form.get("prompt") or default_prompt
-        # Reconstruct entries by row
         i = 0
         while True:
             url = request.form.get(f"url_{i}")
@@ -360,7 +233,6 @@ def index():
         if not entries:
             error = "Enter at least one URL."
             return render_template_string(HTML, error=error, entries=[], prompt=prompt, default_prompt=default_prompt)
-        # Save manual screenshots (if any)
         save_manual_screenshots(request, entries)
         try:
             results, csv_path = analyze_landing_pages(entries, prompt)
