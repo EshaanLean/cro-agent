@@ -4,7 +4,9 @@ import json
 import sys
 import pandas as pd
 from flask import Flask, request, render_template_string, send_file
+from urllib.parse import urlparse
 
+# --- Flushed print utility ---
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
     sys.stdout.flush()
@@ -38,8 +40,26 @@ app.config['UPLOAD_FOLDER'] = "manual_screenshots"
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 flushprint("UPLOAD_FOLDER checked/created")
 
-# The default prompt (Jinja will inject provider_name, url, etc. dynamically)
-RAW_DEFAULT_PROMPT = """
+def url_to_key(url):
+    p = urlparse(url)
+    domain = p.netloc.replace("www.", "")
+    path = "_".join([s for s in p.path.strip("/").split("/") if s])
+    key = f"{domain}_{path}" if path else domain
+    return key.replace(".", "_").replace("-", "_")
+
+# ---- TIPS to show on UI ----
+SCREENSHOT_TIPS = """
+<b>How to take a full-page screenshot (Chrome):</b><br>
+1. <b>Developer Tools:</b> Open the webpage, right-click, select <b>Inspect</b> (or press <b>Ctrl+Shift+I</b>), then press <b>Ctrl+Shift+P</b> (Cmd+Shift+P on Mac) to open the command palette. Type "screenshot" and choose the desired option (e.g., "Capture full size screenshot").<br>
+2. <b>Web Capture:</b> Click the three dots (Settings & more) in the top-right, select <b>More tools</b> &gt; <b>Web capture</b>. Choose full page.<br>
+<b>File Upload Tips:</b><br>
+- You don't need to rename your screenshot! Just select the screenshot file and the app will auto-match it to the correct URL.<br>
+- If the site <b>requires login</b> or <b>blocks bots</b> (examples: Udemy, Brainstation, Cloudflare-protected, some Coursera, CXL, etc.), <b>always upload your own screenshot</b>.<br>
+"""
+
+# ---- Default Prompt (huge, all fields, for direct editing) ----
+def get_default_prompt(provider_name, url, prompt_text_section):
+    return f"""
 As a digital marketing and CRO (Conversion Rate Optimization) expert, analyze the provided landing page screenshot and text content for the company '{provider_name}'.
 Your goal is to populate a structured JSON object based on the visual and textual evidence.
 
@@ -79,123 +99,217 @@ If you cannot determine a value, use "Not Found" or "N/A".
 Return ONLY the valid JSON object, with no other text, comments, or markdown formatting.
 """
 
+# -- Save uploaded screenshots and rename to url-key --
+def save_manual_screenshots(files, url_key_map):
+    uploaded_keys = set()
+    for file in files.getlist("screenshots"):
+        if file.filename:
+            orig_name = file.filename
+            # Try to match file to a url by file name, fallback: just assign in order
+            matched_key = None
+            # Try to match by original filename containing a url-key
+            for key in url_key_map.keys():
+                if key in orig_name:
+                    matched_key = key
+                    break
+            # If no match, assign to first unassigned key (ordered)
+            if not matched_key:
+                for key in url_key_map.keys():
+                    if key not in uploaded_keys:
+                        matched_key = key
+                        break
+            if not matched_key:
+                continue
+            save_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{matched_key}_manual.png")
+            file.save(save_path)
+            uploaded_keys.add(matched_key)
+            flushprint(f"Saved manual screenshot: {save_path}")
+    return uploaded_keys
+
+def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None):
+    flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
+    try:
+        model = genai.GenerativeModel('gemini-2.5-pro')
+        flushprint("GenAI model created")
+        image = Image.open(io.BytesIO(image_bytes))
+        flushprint("Image opened for Gemini")
+        MAX_PIXELS = 16383
+        if image.height > MAX_PIXELS:
+            aspect_ratio = image.width / image.height
+            new_height = MAX_PIXELS - 1
+            new_width = int(new_height * aspect_ratio)
+            image = image.resize((new_width, new_height), Image.LANCZOS)
+            flushprint("Image resized for Gemini API")
+        image_for_api = image
+
+        prompt_text_section = f"""
+        - **Text Content (first 15,000 characters):**
+        ---
+        {page_content[:15000]}
+        ---
+        """ if page_content else ""
+
+        prompt = prompt_override or get_default_prompt(provider_name, url, prompt_text_section)
+
+        flushprint("Sending prompt to Gemini")
+        response = model.generate_content([prompt, image_for_api])
+        cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
+        flushprint("Gemini responded. JSON parsed.")
+        return json.loads(cleaned_json)
+    except Exception as e:
+        flushprint("Gemini multimodal analysis failed:", e)
+        raise
+
+def analyze_landing_pages(landing_pages, prompt_override_dict=None):
+    flushprint("analyze_landing_pages called")
+    all_course_data = []
+    output_dir = "landing_page_analysis"
+    os.makedirs(output_dir, exist_ok=True)
+    try:
+        with sync_playwright() as p:
+            flushprint("Playwright launched")
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36'
+            )
+            for lp in landing_pages:
+                flushprint(f"Processing {lp['name']} ({lp['url']}) manual={lp.get('manual')}")
+                provider_name = lp['name']
+                url = lp['url']
+                prompt = prompt_override_dict.get(provider_name) if prompt_override_dict else None
+                prompt_text_section = ""
+                if lp.get("manual", False):
+                    manual_file = f"{provider_name}_manual.png"
+                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
+                    if not os.path.exists(manual_path):
+                        flushprint(f"Manual screenshot not found: {manual_file}")
+                        all_course_data.append({"Platform": provider_name, "error": f"Manual screenshot '{manual_file}' not found."})
+                        continue
+                    with open(manual_path, "rb") as f:
+                        image_bytes = f.read()
+                    page_content = ""
+                    try:
+                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name, url, prompt)
+                        all_course_data.append(structured_data)
+                        flushprint(f"Gemini result added for {provider_name}")
+                    except Exception as e:
+                        flushprint(f"Error for manual {provider_name}:", e)
+                        all_course_data.append({"Platform": provider_name, "error": str(e)})
+                else:
+                    page = context.new_page()
+                    try:
+                        flushprint(f"Navigating to {url}")
+                        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                        page.wait_for_timeout(5000)
+                        screenshot_path = os.path.join(output_dir, f"{provider_name}_fullpage.png")
+                        page.screenshot(path=screenshot_path, full_page=True)
+                        with open(screenshot_path, "rb") as f:
+                            image_bytes = f.read()
+                        page_content = page.inner_text('body')
+                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name, url, prompt)
+                        all_course_data.append(structured_data)
+                        flushprint(f"Playwright + Gemini result added for {provider_name}")
+                    except Exception as e:
+                        flushprint(f"Error for auto {provider_name}:", e)
+                        all_course_data.append({"Platform": provider_name, "error": str(e)})
+                    finally:
+                        page.close()
+            browser.close()
+            flushprint("Browser closed")
+    except Exception as e:
+        flushprint("Fatal error in analyze_landing_pages:", e)
+        raise
+
+    df = pd.DataFrame(all_course_data)
+    df.to_csv(os.path.join(output_dir, "competitive_analysis_data.csv"), index=False)
+    flushprint("CSV saved")
+    summary = df.to_string(index=False)
+    return summary, os.path.join(output_dir, "competitive_analysis_data.csv")
+
+# -- HTML (with table, toggle, and tips) --
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
   <title>Landing Page Analyzer (Gemini + Playwright)</title>
   <style>
-    body { font-family: Inter, Arial, sans-serif; background: #f7faff; margin: 0; }
-    .container { max-width: 850px; margin: 32px auto 0; background: #fff; border-radius: 16px; box-shadow: 0 2px 16px #0001; padding: 32px 28px 32px 28px; }
-    h1 { margin-top: 0; }
-    .tip, .tip-list { background: #e6f7ff; color: #004466; border-radius: 8px; padding: 18px 20px; margin-bottom: 26px; font-size: 1.07em; }
-    .tip-list ul { margin-top: 0; margin-bottom: 0; }
-    label { font-weight: 600; margin-bottom: 4px; display: block; }
-    textarea, input[type=text] { width: 100%; font-size: 1.06em; padding: 10px; margin-bottom: 14px; border-radius: 6px; border: 1px solid #c5d1db; }
-    textarea { min-height: 92px; }
-    select, input[type=file] { font-size: 1.06em; margin-right: 8px; }
-    .url-row { display: flex; gap: 7px; margin-bottom: 12px; align-items: center; }
-    .url-row input[type=text] { flex: 2.5; min-width: 210px; }
-    .url-row select { flex: 0.8; min-width: 74px; }
-    .url-row input[type=file] { flex: 1.5; }
-    .url-row .remove-btn { flex: 0 0 auto; background: #eee; border: none; border-radius: 6px; padding: 5px 15px; margin-left: 3px; cursor: pointer; }
-    .url-row .remove-btn:hover { background: #e57373; color: white; }
-    .add-btn { margin: 10px 0 28px 0; background: #1976d2; color: #fff; border: none; border-radius: 7px; padding: 7px 19px; cursor: pointer; font-size: 1em; }
-    .add-btn:hover { background: #125b9c; }
+    body { font-family: Arial, sans-serif; margin: 2em; background: #f7faff;}
+    .container { max-width: 840px; margin: auto; background: #fff; border-radius: 12px; box-shadow: 0 3px 18px #0001; padding: 32px 28px 32px 28px;}
+    h1 { font-size: 2.1em; }
+    label { font-weight: bold; margin-top: 10px; display:block;}
+    .tips { background: #e6f0fa; border-left: 5px solid #8bc3ff; padding: 1em; margin-bottom: 2em; border-radius: 10px; font-size:1em;}
+    textarea, input[type=text] { width: 100%; font-family: monospace; margin-top: 4px; }
+    textarea { font-size: 1em; }
+    table.urls { width: 100%; margin-bottom: 12px; border-collapse: collapse; background: #fafdff; }
+    .manual-toggle { width: 80px; text-align:center;}
+    .file-upload { margin-bottom: 1em; }
     .result { background: #f5f5f5; padding: 1em; margin-top: 1em; border-radius: 8px; }
-    .error { color: #c62828; font-weight: 500; margin: 18px 0; }
-    .download-link { display: inline-block; margin-top: 16px; font-weight: 600; color: #0e5386; }
-    .hide { display: none !important; }
-    @media (max-width: 670px) {
-      .container { padding: 15px; }
-      .url-row { flex-direction: column; gap: 2px; }
-      .url-row input[type=text], .url-row select, .url-row input[type=file], .url-row .remove-btn { width: 100%; margin: 3px 0; }
-    }
+    .error { color: red; margin-top: 1em; }
+    th, td { padding: 8px; border-bottom: 1px solid #d4e4f7;}
+    th {background: #f1f9ff;}
+    .btn { font-size: 1em; background: #2b70e0; color: #fff; border: none; padding: 12px 24px; border-radius: 7px; cursor: pointer; }
+    .btn:hover { background: #2160be;}
+    .btn:disabled { background: #bbb;}
   </style>
   <script>
-    function toggleManual(selectElem, idx) {
-      var fileInput = document.getElementsByClassName('screenshot-input')[idx];
-      if (selectElem.value === "manual") {
-        fileInput.classList.remove('hide');
-      } else {
-        fileInput.classList.add('hide');
-      }
-    }
+    // Add/remove URL rows, toggle manual, filename hint
     function addRow() {
-      const urlList = document.getElementById('url-list');
-      const n = urlList.children.length;
-      let div = document.createElement('div');
-      div.className = 'url-row';
-      div.innerHTML = `
-        <input type="text" name="urls" placeholder="Paste landing page URL here..." required>
-        <select name="modes" onchange="toggleManual(this, ${n})">
-          <option value="auto" selected>Auto</option>
-          <option value="manual">Manual</option>
-        </select>
-        <input type="file" name="screenshots" accept="image/png" class="screenshot-input hide"/>
-        <button type="button" class="remove-btn" onclick="removeRow(this)">Remove</button>
-      `;
-      urlList.appendChild(div);
+      const t = document.getElementById('urltable');
+      let row = t.insertRow(-1);
+      row.innerHTML = '<td><input name="urls" type="text" required style="width:98%"></td><td class="manual-toggle"><input name="manuals" type="checkbox"></td>';
     }
-    function removeRow(btn) {
-      btn.parentElement.remove();
-    }
-    window.onload = function() {
-      let selects = document.getElementsByName("modes");
-      let fileInputs = document.getElementsByClassName("screenshot-input");
-      for (let i = 0; i < selects.length; ++i) {
-        selects[i].onchange = function() { toggleManual(this, i); };
-        if (selects[i].value !== "manual") {
-          fileInputs[i].classList.add('hide');
-        }
-      }
+    function removeRow() {
+      const t = document.getElementById('urltable');
+      if(t.rows.length>1) t.deleteRow(-1);
     }
   </script>
 </head>
 <body>
 <div class="container">
   <h1>Landing Page Analyzer (Gemini + Playwright)</h1>
-
-  <div class="tip-list">
-    <ul>
-      <li><b>Step 1:</b> For most websites, keep mode as <b>Auto</b>. For pages that <b>block bots</b> (Cloudflare, hCaptcha, Sucuri, PerimeterX, sites requiring login like Udemy, Brainstation, Coursera, etc), switch mode to <b>Manual</b> and upload your screenshot.</li>
-      <li><b>Step 2:</b> <b>How to take a full-page screenshot in Chrome:</b><br>
-        <b>Method 1:</b> Open the webpage, right-click, select "Inspect" (or press Ctrl+Shift+I), then press Ctrl+Shift+P (or Cmd+Shift+P on Mac), type "screenshot", choose <b>"Capture full size screenshot"</b>.<br>
-        <b>Method 2:</b> Click the three dots (top-right in Chrome), select "More tools" &gt; "Web capture" and capture full page.<br>
-        <b>Naming:</b> Name your image <b>&lt;provider&gt;_manual.png</b> (e.g. <b>udemy_manual.png</b>).
-      </li>
-    </ul>
-  </div>
-
+  <div class="tips">{{ tips|safe }}</div>
   <form method="POST" enctype="multipart/form-data">
-    <label>Landing Page URLs & Modes:</label>
-    <div id="url-list">
-      {% for entry in entries %}
-      <div class="url-row">
-        <input type="text" name="urls" value="{{ entry.url }}" placeholder="Paste landing page URL here..." required>
-        <select name="modes" onchange="toggleManual(this, {{ loop.index0 }})">
-          <option value="auto" {% if not entry.manual %}selected{% endif %}>Auto</option>
-          <option value="manual" {% if entry.manual %}selected{% endif %}>Manual</option>
-        </select>
-        <input type="file" name="screenshots" accept="image/png" class="screenshot-input {% if not entry.manual %}hide{% endif %}" />
-        {% if not loop.first %}
-        <button type="button" class="remove-btn" onclick="removeRow(this)">Remove</button>
-        {% endif %}
-      </div>
+    <label>Landing Page URLs (each on a separate row):</label>
+    <table class="urls" id="urltable">
+      <tr>
+        <th>Landing Page URL</th>
+        <th class="manual-toggle">Manual Screenshot?</th>
+      </tr>
+      {% for row in entries %}
+      <tr>
+        <td>
+          <input name="urls" type="text" required value="{{ row['url'] }}" style="width:98%">
+        </td>
+        <td class="manual-toggle">
+          <input name="manuals" type="checkbox" {% if row['manual'] %}checked{% endif %}>
+        </td>
+      </tr>
       {% endfor %}
+      {% if not entries %}
+      <tr>
+        <td><input name="urls" type="text" required></td>
+        <td class="manual-toggle"><input name="manuals" type="checkbox"></td>
+      </tr>
+      {% endif %}
+    </table>
+    <button type="button" onclick="addRow()">+ Add URL</button>
+    <button type="button" onclick="removeRow()">- Remove</button>
+    <br><br>
+    <label>Upload screenshots (for all manual URLs):</label>
+    <div class="file-upload">
+      <input type="file" name="screenshots" multiple>
+      <small>For protected/login/bot-blocked sites (Cloudflare, Udemy, CXL, Coursera, Brainstation, etc), upload a PNG screenshot. You don't need to rename; we'll auto-match.</small>
     </div>
-    <button type="button" class="add-btn" onclick="addRow()">+ Add Another URL</button>
-    <label>Gemini Analysis Prompt (edit as needed):</label>
-    <textarea name="prompt" rows="16">{{ prompt or default_prompt }}</textarea>
-    <button type="submit" style="margin-top:18px;">Run Analysis</button>
+    <label>Prompt for Gemini (edit if needed):</label>
+    <textarea name="prompt" rows="20">{{ default_prompt }}</textarea><br><br>
+    <button class="btn" type="submit">Run Analysis</button>
   </form>
-
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   {% if summary %}
     <div class="result">
       <h2>Analysis Summary:</h2>
       <pre>{{summary}}</pre>
-      <a class="download-link" href="/download/csv">Download CSV</a>
+      <a href="/download/csv">Download CSV</a>
     </div>
   {% endif %}
 </div>
@@ -203,159 +317,83 @@ HTML = """
 </html>
 """
 
-def save_manual_screenshots(files):
-    uploaded_names = []
-    for file in files.getlist("screenshots"):
-        if file and file.filename:
-            save_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-            file.save(save_path)
-            uploaded_names.append(file.filename)
-    return uploaded_names
-
-def get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name, url, prompt_override=None):
-    try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
-        image = Image.open(io.BytesIO(image_bytes))
-        MAX_PIXELS = 16383
-        if image.height > MAX_PIXELS:
-            aspect_ratio = image.width / image.height
-            new_height = MAX_PIXELS - 1
-            new_width = int(new_height * aspect_ratio)
-            image = image.resize((new_width, new_height), Image.LANCZOS)
-        image_for_api = image
-        prompt_text_section = f"""
-        - **Text Content (first 15,000 characters):**
-        ---
-        {page_content[:15000]}
-        ---
-        """ if page_content else ""
-        prompt = (prompt_override or RAW_DEFAULT_PROMPT).format(
-            provider_name=provider_name,
-            url=url,
-            prompt_text_section=prompt_text_section
-        )
-        response = model.generate_content([prompt, image_for_api])
-        cleaned = response.text.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        if cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        cleaned = cleaned.strip().rstrip("```").strip()
-        try:
-            return json.loads(cleaned)
-        except Exception:
-            raise Exception("Gemini response was not valid JSON: " + cleaned[:500])
-    except Exception as e:
-        raise
-
-def analyze_landing_pages(landing_pages, prompt_override=None):
-    all_course_data = []
-    output_dir = "landing_page_analysis"
-    os.makedirs(output_dir, exist_ok=True)
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36'
-            )
-            for lp in landing_pages:
-                if lp.get("manual", False):
-                    manual_file = f"{lp['name']}_manual.png"
-                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
-                    if not os.path.exists(manual_path):
-                        all_course_data.append({"Platform": lp['name'], "error": f"Manual screenshot '{manual_file}' not found."})
-                        continue
-                    with open(manual_path, "rb") as f:
-                        image_bytes = f.read()
-                    page_content = ""
-                    try:
-                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
-                        all_course_data.append(structured_data)
-                    except Exception as e:
-                        all_course_data.append({"Platform": lp['name'], "error": str(e)})
-                else:
-                    page = context.new_page()
-                    try:
-                        page.goto(lp["url"], wait_until="domcontentloaded", timeout=60000)
-                        page.wait_for_timeout(5000)
-                        screenshot_path = os.path.join(output_dir, f"{lp['name']}_fullpage.png")
-                        page.screenshot(path=screenshot_path, full_page=True)
-                        with open(screenshot_path, "rb") as f:
-                            image_bytes = f.read()
-                        page_content = page.inner_text('body')
-                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
-                        all_course_data.append(structured_data)
-                    except Exception as e:
-                        all_course_data.append({"Platform": lp['name'], "error": str(e)})
-                    finally:
-                        page.close()
-            browser.close()
-    except Exception as e:
-        raise
-
-    df = pd.DataFrame(all_course_data)
-    df.to_csv(os.path.join(output_dir, "competitive_analysis_data.csv"), index=False)
-    summary = df.to_string(index=False)
-    return summary, os.path.join(output_dir, "competitive_analysis_data.csv")
-
 @app.route("/", methods=["GET", "POST"])
 def index():
+    flushprint("Index route called:", request.method)
     summary = None
     error = None
-    prompt = ''
-    entries = []
+    csv_path = None
 
+    # --- Default: one empty entry for UI, or from POST ---
+    entries = []
     if request.method == "POST":
         urls = request.form.getlist("urls")
-        modes = request.form.getlist("modes")
-        prompt = request.form.get("prompt") or RAW_DEFAULT_PROMPT.strip()
-        uploaded_files = request.files
-        save_manual_screenshots(uploaded_files)
-        landing_pages = []
-        entries = []
-        for i, url in enumerate(urls):
-            url = url.strip()
-            if not url:
-                continue
-            mode = modes[i] if i < len(modes) else "auto"
-            base_name = url.split("//")[-1].split("/")[1] if "/" in url.split("//")[-1] else url.split("//")[-1]
-            name = base_name.lower().replace(".", "_").replace("-", "_")
-            is_manual = (mode == "manual")
-            landing_pages.append({
-                "name": name,
-                "url": url,
-                "manual": is_manual
-            })
-            entries.append({
-                "url": url,
-                "manual": is_manual
-            })
-        try:
-            summary, csv_path = analyze_landing_pages(landing_pages, prompt)
-        except Exception as e:
-            error = str(e)
+        manuals = request.form.getlist("manuals")
+        # If user didn't check the box, manuals[] will be shorter, so:
+        manual_flags = []
+        for idx in range(len(urls)):
+            try:
+                manual_flags.append(request.form.getlist("manuals")[idx] == "on")
+            except:
+                manual_flags.append(False)
+        entries = [{"url": urls[i], "manual": manual_flags[i] if i < len(manual_flags) else False} for i in range(len(urls))]
     else:
         entries = [{"url": "", "manual": False}]
+    
+    # --- Prepare url_key_map for all entries (so we can match uploads) ---
+    url_key_map = {}
+    for row in entries:
+        if row["url"].strip():
+            url_key_map[url_to_key(row["url"].strip())] = row["url"].strip()
+    flushprint("url_key_map:", url_key_map)
+
+    default_prompt = get_default_prompt("{provider_name}", "{url}", "{prompt_text_section}")
+
+    if request.method == "POST":
+        # --- Save screenshots, mapped to correct url_key ---
+        save_manual_screenshots(request.files, url_key_map)
+
+        # --- Build landing_pages dicts for processing ---
+        landing_pages = []
+        for row in entries:
+            if row["url"].strip():
+                key = url_to_key(row["url"].strip())
+                manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{key}_manual.png")
+                landing_pages.append({
+                    "name": key,
+                    "url": row["url"].strip(),
+                    "manual": row["manual"] or os.path.exists(manual_path)
+                })
+        flushprint("Landing pages dict:", landing_pages)
+        try:
+            summary, csv_path = analyze_landing_pages(landing_pages)
+            flushprint("Analysis summary done.")
+        except Exception as e:
+            error = str(e)
+            flushprint("Error in POST analyze_landing_pages:", e)
 
     return render_template_string(
         HTML,
         summary=summary,
         error=error,
-        prompt=prompt,
-        default_prompt=RAW_DEFAULT_PROMPT.strip(),
+        tips=SCREENSHOT_TIPS,
+        default_prompt=default_prompt,
         entries=entries
     )
 
 @app.route('/download/csv')
 def download_csv():
+    flushprint("Download CSV requested")
     path = "landing_page_analysis/competitive_analysis_data.csv"
     if not os.path.exists(path):
+        flushprint("CSV not found")
         return "No file available", 404
+    flushprint("CSV found, sending")
     return send_file(path, as_attachment=True, download_name="competitive_analysis_data.csv")
 
 @app.route("/ping")
 def ping():
+    flushprint("pinged /ping endpoint")
     return "pong"
 
 if __name__ == "__main__":
