@@ -1,12 +1,10 @@
 import os
 import json
 import csv
-import google.generativeai as genai  # Updated import
+import google.generativeai as genai
 from flask import Flask, request, render_template_string, send_file
-import requests
 from PIL import Image
-import io
-import base64
+from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 
@@ -28,32 +26,30 @@ def url_to_key(url):
             .replace(":", "_")
             .replace("-", "_"))
 
-def take_screenshot(url):
-    """
-    Take a screenshot of the URL using a headless browser service
-    This is a placeholder - you'll need to implement this based on your preferred method
-    """
-    # Option 1: Use Selenium with Chrome headless
-    # Option 2: Use Playwright
-    # Option 3: Use a screenshot service API
-    
-    # For now, return None to indicate manual screenshot is needed
-    flushprint(f"Auto screenshot not implemented for {url}")
-    return None
+def take_screenshot(url, save_path):
+    """Take a full-page screenshot using Playwright and save it to save_path"""
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=60000)  # 60s timeout for slow pages
+            page.screenshot(path=save_path, full_page=True)
+            browser.close()
+        flushprint(f"Auto screenshot saved for {url} -> {save_path}")
+        return save_path
+    except Exception as e:
+        flushprint(f"Playwright screenshot failed for {url}: {e}")
+        return None
 
 def load_image_for_gemini(image_path):
     """Load and prepare image for Gemini API"""
     try:
         with Image.open(image_path) as img:
-            # Convert to RGB if needed
             if img.mode != 'RGB':
                 img = img.convert('RGB')
-            
-            # Resize if too large (Gemini has size limits)
             max_size = 1024
             if img.width > max_size or img.height > max_size:
                 img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-            
             return img
     except Exception as e:
         flushprint(f"Error loading image {image_path}: {e}")
@@ -62,34 +58,21 @@ def load_image_for_gemini(image_path):
 def analyze_with_gemini(image_path, url, provider_name, prompt_template):
     """Analyze landing page screenshot with Gemini"""
     try:
-        # Load image
         image = load_image_for_gemini(image_path)
         if not image:
             return None
-        
-        # Prepare prompt
         prompt = prompt_template.format(
             provider_name=provider_name,
             url=url,
             prompt_text_section="**Note:** Analysis based on screenshot only."
         )
-        
-        # Initialize Gemini model
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
-        # Generate content with image
         response = model.generate_content([prompt, image])
-        
-        # Parse JSON response
         response_text = response.text.strip()
-        
-        # Clean up response if it has markdown formatting
         if response_text.startswith('```json'):
             response_text = response_text[7:]
         if response_text.endswith('```'):
             response_text = response_text[:-3]
-        
-        # Parse JSON
         try:
             json_result = json.loads(response_text)
             return json_result
@@ -97,7 +80,6 @@ def analyze_with_gemini(image_path, url, provider_name, prompt_template):
             flushprint(f"JSON parsing error for {url}: {e}")
             flushprint(f"Response was: {response_text[:500]}...")
             return None
-            
     except Exception as e:
         flushprint(f"Error analyzing {url} with Gemini: {e}")
         return None
@@ -185,10 +167,11 @@ You also have access to a detailed comparison table of all pages (in CSV format 
 Write a strategic summary for {client_name} — identifying how it can improve conversions through CRO and personalization, without changing its core offer (real-world projects, mentorship, career prep).
 
 Create an Opportunity Table with these columns:
-- **Opportunity**
-- **Why It Matters**
-- **Tactical Ideas**
-- **Rationale / Inspiration** (note if it's competitor-based or CRO best practice)
+
+* **Opportunity**
+* **Why It Matters**
+* **Tactical Ideas**
+* **Rationale / Inspiration** (note if it's competitor-based or CRO best practice)
 
 Summarize the strategic advantage these changes would unlock.
 
@@ -217,7 +200,7 @@ HTML = '''
 </head>
 <body>
     <h1>🔍 CRO Landing Page Analyzer</h1>
-    
+
     <div class="tip">
         <h3>📸 How to Take Screenshots (Manual Mode):</h3>
         <ul>
@@ -314,6 +297,7 @@ HTML = '''
             `;
         }
     </script>
+
 </body>
 </html>
 '''
@@ -329,20 +313,18 @@ def index():
     client_url = ""
     client_name = ""
     competitor_urls = ""
-    
+
     if request.method == "POST":
         try:
             prompt = request.form.get("prompt") or default_prompt
             i = 0
             client_idx = request.form.get("client_idx")
-            
-            # Parse form entries
             while True:
                 url = request.form.get(f"url_{i}")
                 if not url:
                     break
                 url = url.strip()
-                if url:  # Only process non-empty URLs
+                if url:
                     key = url_to_key(url)
                     manual = request.form.get(f"manual_{i}") == "on"
                     is_client = str(i) == str(client_idx)
@@ -366,12 +348,10 @@ def index():
                         file.save(filepath)
                         flushprint(f"Saved manual screenshot: {filepath}")
 
-                # Analyze landing pages
+                # Analyze landing pages (with auto-screenshot support)
                 results, csv_path = analyze_landing_pages(entries, prompt)
                 if results:
                     summary = "Analysis completed successfully!"
-                    
-                    # Identify client and competitors for summary
                     client_entry = next((e for e in entries if e["client"]), None)
                     competitor_entries = [e for e in entries if not e["client"]]
                     client_url = client_entry["url"] if client_entry else ""
@@ -379,12 +359,10 @@ def index():
                     competitor_urls = "\n".join(e["url"] for e in competitor_entries)
                 else:
                     error = "Analysis failed. Please check your screenshots and try again."
-                    
         except Exception as e:
             error = f"An error occurred: {str(e)}"
             flushprint(f"Error in index route: {e}")
     else:
-        # Default rows for new users
         entries = [
             {"url": "", "key": "", "manual": False, "client": False},
             {"url": "", "key": "", "manual": False, "client": False},
@@ -418,11 +396,9 @@ def generate_summary():
         theme = request.form.get("theme", "Data Analytics")
         competitor_urls = request.form["competitor_urls"]
         
-        # Read CSV data
         with open(csv_path, "r", encoding="utf-8") as f:
             data_string = f.read()
         
-        # Generate prompt
         prompt = strategy_prompt_template.format(
             client_name=client_name,
             client_lp=client_lp,
@@ -431,47 +407,41 @@ def generate_summary():
             data_string=data_string
         )
         
-        # Generate summary with Gemini
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
         flushprint("Generating strategic summary via Gemini")
         response = model.generate_content(prompt)
         summary_text = response.text
         
         return render_template_string("""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Strategic Summary</title>
-                <style>
-                    body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
-                    .summary { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
-                    .back-link { display: inline-block; margin: 20px 0; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
-                    .back-link:hover { background: #0056b3; }
-                    pre { white-space: pre-wrap; word-wrap: break-word; }
-                </style>
-            </head>
-            <body>
-                <h1>📊 Strategic Summary & Recommendations</h1>
-                <div class="summary">
-                    <pre>{{ summary_text }}</pre>
-                </div>
-                <a href="/" class="back-link">← Back to Analyzer</a>
-            </body>
-            </html>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Strategic Summary</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+        .summary { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
+        .back-link { display: inline-block; margin: 20px 0; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .back-link:hover { background: #0056b3; }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>📊 Strategic Summary & Recommendations</h1>
+    <div class="summary">
+        <pre>{{ summary_text }}</pre>
+    </div>
+    <a href="/" class="back-link">← Back to Analyzer</a>
+</body>
+</html>
         """, summary_text=summary_text)
-        
     except Exception as e:
         flushprint(f"Error generating summary: {e}")
         return f"Error generating summary: {str(e)}", 500
 
 def analyze_landing_pages(entries, prompt):
-    """
-    Analyze landing pages using Gemini API with screenshots
-    """
+    """Analyze landing pages using Gemini API with screenshots (manual or auto)"""
     flushprint("Starting landing page analysis...")
     results = []
-    
-    # CSV headers
     header = [
         "Platform", "LP Link", "Main Offer", "Purchase or Lead Gen Form", "Primary CTA",
         "Above the Fold - Headline", "Above the Fold - Trust Elements", "Above the Fold - Other Elements",
@@ -479,55 +449,46 @@ def analyze_landing_pages(entries, prompt):
         "Above the Fold - # of CTAs", "Above the Fold - CTA / Form Position", "Primary CTA Just for Free Trial",
         "Secondary CTA", "Clickable Logo", "Navigation Bar"
     ]
-    
     rows = []
     
     for entry in entries:
         flushprint(f"Processing {entry['key']} ({entry['url']}) manual={entry['manual']}")
-        
-        # Determine screenshot path
         manual_path = os.path.join(UPLOAD_FOLDER, f"{entry['key']}_manual.png")
         auto_path = os.path.join(UPLOAD_FOLDER, f"{entry['key']}_auto.png")
-        
         screenshot_path = None
+        
         if entry['manual'] and os.path.exists(manual_path):
             screenshot_path = manual_path
         elif os.path.exists(auto_path):
             screenshot_path = auto_path
         elif not entry['manual']:
-            # Try to take automatic screenshot
-            auto_screenshot = take_screenshot(entry['url'])
-            if auto_screenshot:
-                screenshot_path = auto_path
+            # Try to take automatic screenshot and save to auto_path
+            auto_screenshot_path = take_screenshot(entry['url'], auto_path)
+            if auto_screenshot_path and os.path.exists(auto_screenshot_path):
+                screenshot_path = auto_screenshot_path
         
         if screenshot_path and os.path.exists(screenshot_path):
-            # Analyze with Gemini
             flushprint(f"Analyzing {entry['url']} with screenshot: {screenshot_path}")
             json_result = analyze_with_gemini(
-                screenshot_path, 
-                entry['url'], 
-                entry['key'], 
+                screenshot_path,
+                entry['url'],
+                entry['key'],
                 prompt
             )
-            
             if not json_result:
                 flushprint(f"Gemini analysis failed for {entry['url']}, using fallback")
                 json_result = create_fallback_result(entry['url'], entry['key'])
-                
         else:
             flushprint(f"No screenshot available for {entry['url']}, using fallback")
             json_result = create_fallback_result(entry['url'], entry['key'])
         
-        # Ensure all required fields are present
         for field in header:
             if field not in json_result:
                 json_result[field] = "N/A"
         
-        # Add to results
         results.append(json_result)
         rows.append([json_result.get(h, "N/A") for h in header])
     
-    # Save to CSV
     try:
         with open(CSV_FILE, "w", newline='', encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -540,14 +501,12 @@ def analyze_landing_pages(entries, prompt):
         flushprint(f"Error saving CSV: {e}")
         return None, None
 
-# Configure Gemini API
 def initialize_gemini():
     """Initialize Gemini API with error handling"""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         flushprint("Warning: GEMINI_API_KEY not found in environment variables")
         return False
-    
     try:
         genai.configure(api_key=api_key)
         flushprint("Gemini API configured successfully")
@@ -557,10 +516,7 @@ def initialize_gemini():
         return False
 
 if __name__ == "__main__":
-    # Initialize Gemini API
     if not initialize_gemini():
         flushprint("Warning: Running without Gemini API - analysis will use fallback data")
-    
-    # Run Flask app
     flushprint("Starting Flask app...")
     app.run(host="0.0.0.0", port=10000, debug=True)
