@@ -242,7 +242,45 @@ def index():
     csv_path = None
     urls = ''
     prompt = ''
-    default_prompt = "Describe the value prop, CTA, and trust elements above the fold..."
+    default_prompt = f"""
+    As a digital marketing and CRO (Conversion Rate Optimization) expert, analyze the provided landing page screenshot and text content for the company '{provider_name}'.
+    Your goal is to populate a structured JSON object based on the visual and textual evidence.
+
+    **Webpage Information:**
+    - **Provider:** {provider_name}
+    - **URL:** {url}
+    {prompt_text_section}
+
+    **Instructions:**
+    Carefully examine the **screenshot** for visual layout, design elements, and "above the fold" content.
+    If text content is provided, use it to extract specific details and copy. If not, rely only on the screenshot.
+    Fill out the following JSON object.
+
+    If you cannot determine a value, use "Not Found" or "N/A".
+
+    **JSON Structure to Populate:**
+    {{
+      "Platform": "{provider_name}",
+      "LP Link": "{url}",
+      "Main Offer": "Describe the main value proposition or product offering.",
+      "Purchase or Lead Gen Form": "Classify the primary conversion goal. If the main button leads directly to a payment form, classify as 'Direct Purchase'. If it leads to a free sign-up, a free trial, or a form to request information/a demo, classify as 'Lead Generation'. If it is a simple sign-up to start a free course, classify as 'Low-friction sign-up'.",
+      "Primary CTA": "Identify the most prominent, visually emphasized call-to-action button above the fold. This is usually the largest button with the brightest color. Provide its exact text.",
+      "Above the Fold - Headline": "The main headline text visible at the top of the page.",
+      "Above the Fold - Trust Elements": "List any trust signals visible without scrolling (e.g., logos of partners, ratings, student testimonials, 'Trusted by X users').",
+      "Above the Fold - Other Elements": "List other key elements visible (e.g., sub-headlines, short descriptions, benefits).",
+      "Above the Fold - Creative (Yes/No)": "Is there a prominent hero image, video, or illustration? (Yes/No)",
+      "Above the Fold - Creative Type": "If yes, describe the creative (e.g., 'Hero image with testimonial', 'Course preview video', 'Illustration of data concepts').",
+      "Above the Fold - Creative Position": "Where is the creative located? (e.g., 'Right side of the hero section', 'Background video').",
+      "Above the Fold - # of CTAs": "Count all distinct call-to-action buttons AND text links (e.g., 'Enroll Now', 'Request Info', 'Financial aid available') visible above the fold.",
+      "Above the Fold - CTA / Form Position": "Describe the position of the primary CTA or lead form.",
+      "Primary CTA Just for Free Trial": "Does the primary CTA explicitly mention a free trial or is it for direct enrollment/purchase? (e.g., 'Start Free Trial', 'Enroll Now').",
+      "Secondary CTA": "Identify the second-most prominent call-to-action. This could be a button with a less vibrant color, an outlined button, or a prominent text link like 'Book a Call' or 'Explore Syllabus'. Provide its exact text.",
+      "Clickable Logo": "Is the main logo in the navigation bar clickable? (Assume Yes if it's standard practice).",
+      "Navigation Bar": "Are there navigation links at the top of the page? (Yes/No)"
+    }}
+
+    Return ONLY the valid JSON object, with no other text, comments, or markdown formatting.
+    """
 
     if request.method == "POST":
         flushprint("POST data:", request.form)
