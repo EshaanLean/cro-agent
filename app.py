@@ -5,12 +5,52 @@ import sys
 import pandas as pd
 from flask import Flask, request, render_template_string, send_file
 
-# --- Flushed print utility ---
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
     sys.stdout.flush()
 
-# ------------- LOG APP STARTUP -------------
+# --- Dynamic default prompt as a FUNCTION! ---
+def build_default_prompt(provider_name, url, prompt_text_section=""):
+    return f"""
+As a digital marketing and CRO (Conversion Rate Optimization) expert, analyze the provided landing page screenshot and text content for the company '{provider_name}'.
+Your goal is to populate a structured JSON object based on the visual and textual evidence.
+
+**Webpage Information:**
+- **Provider:** {provider_name}
+- **URL:** {url}
+{prompt_text_section}
+
+**Instructions:**
+Carefully examine the **screenshot** for visual layout, design elements, and "above the fold" content.
+If text content is provided, use it to extract specific details and copy. If not, rely only on the screenshot.
+Fill out the following JSON object.
+
+If you cannot determine a value, use "Not Found" or "N/A".
+
+**JSON Structure to Populate:**
+{{
+  "Platform": "{provider_name}",
+  "LP Link": "{url}",
+  "Main Offer": "Describe the main value proposition or product offering.",
+  "Purchase or Lead Gen Form": "Classify the primary conversion goal. If the main button leads directly to a payment form, classify as 'Direct Purchase'. If it leads to a free sign-up, a free trial, or a form to request information/a demo, classify as 'Lead Generation'. If it is a simple sign-up to start a free course, classify as 'Low-friction sign-up'.",
+  "Primary CTA": "Identify the most prominent, visually emphasized call-to-action button above the fold. This is usually the largest button with the brightest color. Provide its exact text.",
+  "Above the Fold - Headline": "The main headline text visible at the top of the page.",
+  "Above the Fold - Trust Elements": "List any trust signals visible without scrolling (e.g., logos of partners, ratings, student testimonials, 'Trusted by X users').",
+  "Above the Fold - Other Elements": "List other key elements visible (e.g., sub-headlines, short descriptions, benefits).",
+  "Above the Fold - Creative (Yes/No)": "Is there a prominent hero image, video, or illustration? (Yes/No)",
+  "Above the Fold - Creative Type": "If yes, describe the creative (e.g., 'Hero image with testimonial', 'Course preview video', 'Illustration of data concepts').",
+  "Above the Fold - Creative Position": "Where is the creative located? (e.g., 'Right side of the hero section', 'Background video').",
+  "Above the Fold - # of CTAs": "Count all distinct call-to-action buttons AND text links (e.g., 'Enroll Now', 'Request Info', 'Financial aid available') visible above the fold.",
+  "Above the Fold - CTA / Form Position": "Describe the position of the primary CTA or lead form.",
+  "Primary CTA Just for Free Trial": "Does the primary CTA explicitly mention a free trial or is it for direct enrollment/purchase? (e.g., 'Start Free Trial', 'Enroll Now').",
+  "Secondary CTA": "Identify the second-most prominent call-to-action. This could be a button with a less vibrant color, an outlined button, or a prominent text link like 'Book a Call' or 'Explore Syllabus'. Provide its exact text.",
+  "Clickable Logo": "Is the main logo in the navigation bar clickable? (Assume Yes if it's standard practice).",
+  "Navigation Bar": "Are there navigation links at the top of the page? (Yes/No)"
+}}
+
+Return ONLY the valid JSON object, with no other text, comments, or markdown formatting.
+"""
+
 flushprint("=== app.py is starting up ===")
 
 try:
@@ -22,7 +62,6 @@ except Exception as e:
     flushprint("Import error:", e)
     raise
 
-# -- API KEY SETUP (use Render env vars for prod!) --
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     flushprint("ERROR: GEMINI_API_KEY env var not set!")
@@ -41,200 +80,88 @@ app.config['UPLOAD_FOLDER'] = "manual_screenshots"
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 flushprint("UPLOAD_FOLDER checked/created")
 
-# ------------- NEW HTML TEMPLATE --------------------
+# --- Basic HTML for UI (customize for your needs) ---
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
   <title>Landing Page Analyzer (Gemini + Playwright)</title>
   <style>
-    body {
-      font-family: 'Inter', Arial, sans-serif;
-      background: #f7f9fa;
-      margin: 0;
-      padding: 0;
-    }
-    .container {
-      max-width: 700px;
-      margin: 40px auto;
-      background: #fff;
-      border-radius: 14px;
-      box-shadow: 0 8px 32px rgba(60,72,99,0.08);
-      padding: 2.5em 2em 2em 2em;
-    }
-    h1 {
-      text-align: center;
-      color: #274690;
-      margin-bottom: 0.5em;
-      font-size: 2.2em;
-    }
-    .subtitle {
-      color: #555;
-      text-align: center;
-      margin-bottom: 1.8em;
-    }
-    .tips {
-      background: #e7f0fd;
-      padding: 1em;
-      border-radius: 10px;
-      font-size: 1em;
-      color: #274690;
-      margin-bottom: 2em;
-    }
-    label {
-      font-weight: 500;
-      margin-top: 1em;
-      display: block;
-    }
-    .urls-list {
-      margin-bottom: 1.2em;
-    }
-    .url-row {
-      background: #f5f7fa;
-      border-radius: 8px;
-      padding: 1em;
-      display: flex;
-      align-items: center;
-      margin-bottom: 0.5em;
-      gap: 1em;
-    }
-    .url-row input[type="text"] {
-      flex: 2;
-      margin-right: 8px;
-      padding: 0.6em;
-    }
-    .url-row select {
-      flex: 1;
-      padding: 0.6em;
-    }
-    .url-row input[type="file"] {
-      flex: 1.5;
-      background: #fff;
-      border: 1px solid #dde;
-      padding: 3px 5px;
-    }
-    .url-row button[type="button"] {
-      margin-left: 8px;
-      background: #eee;
-      border: none;
-      border-radius: 6px;
-      padding: 0.6em 1em;
-      cursor: pointer;
-      font-weight: 500;
-    }
-    .url-row button[type="button"]:hover {
-      background: #e6e6e6;
-    }
-    textarea, input[type=text] {
-      width: 100%;
-      border-radius: 6px;
-      border: 1px solid #dde;
-      padding: 0.7em;
-      font-size: 1em;
-      margin-bottom: 1.2em;
-    }
-    button[type=submit] {
-      display: block;
-      margin: 1.6em auto 0 auto;
-      background: #274690;
-      color: #fff;
-      font-size: 1.1em;
-      border: none;
-      border-radius: 8px;
-      padding: 0.85em 2.5em;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      box-shadow: 0 2px 10px rgba(60,72,99,0.12);
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    button[type=submit]:hover {
-      background: #173259;
-    }
-    .result {
-      background: #f7faff;
-      padding: 1.2em;
-      margin-top: 2em;
-      border-radius: 12px;
-      font-size: 1.05em;
-    }
-    .error {
-      color: #b00020;
-      font-weight: 500;
-      margin-top: 1.2em;
-      margin-bottom: 1em;
-    }
-    @media (max-width:600px) {
-      .container { padding: 1.2em; }
-      .url-row { flex-direction: column; gap: 0.5em; }
-      .url-row input, .url-row select { width: 100%; }
-    }
+    body { font-family: Arial; margin: 2em; background: #fafaff; }
+    .container { max-width: 740px; margin: auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 18px #ececec; padding: 2em 2em 1em 2em;}
+    textarea, input[type=text] { width: 100%; font-size: 1em; }
+    .file-upload { margin-bottom: 1em; }
+    label { font-weight: bold; }
+    .result { background: #f5f7fc; padding: 1em; margin-top: 1em; border-radius: 8px; }
+    .error { color: red; margin: 1em 0; }
+    .tip { color: #444; font-size: 0.98em; background: #eaf3ff; padding: 8px 14px; border-radius: 7px; margin: 8px 0;}
+    .tips-list {margin: 0.2em 0 1.3em 0; padding-left: 1.2em;}
+    h1 {margin-top: 0.3em;}
   </style>
-  <script>
-    function addUrlRow() {
-      const list = document.getElementById('urls-list');
-      const row = document.createElement('div');
-      row.className = 'url-row';
-      row.innerHTML = `
-        <input type="text" name="url[]" placeholder="Paste landing page URL" required>
-        <select name="mode[]"
-          onchange="this.parentElement.querySelector('input[type=file]').style.display = (this.value==='manual') ? 'block' : 'none'">
-          <option value="auto">Auto Analyze</option>
-          <option value="manual">Manual Screenshot</option>
-        </select>
-        <input type="file" name="screenshot[]" accept="image/png,image/jpeg" style="display:none">
-        <button type="button" onclick="this.parentElement.remove()">Remove</button>
-      `;
-      list.appendChild(row);
-    }
-    window.onload = function() {
-      addUrlRow();
-    }
-  </script>
 </head>
 <body>
-  <div class="container">
-    <h1>Landing Page Analyzer</h1>
-    <div class="subtitle">Analyze above-the-fold value prop, CTAs, and trust for any web page. Uses Google Gemini + Playwright.</div>
-    <div class="tips">
-      <strong>Tips:</strong><br>
-      1. <b>Most sites:</b> Use "Auto Analyze" – just paste the URL!<br>
-      2. <b>Login-required sites (Udemy, Brainstation, etc):</b> <br>
-         - Take a full-page screenshot (<a href="https://support.microsoft.com/en-us/windows/windows-11-screenshots-6d94867b-dc3a-5395-cb6c-5b766c41b8c2" target="_blank">Windows</a>; <a href="https://support.apple.com/en-us/HT201361" target="_blank">Mac</a>).<br>
-         - Name file as <code>platform_manual.png</code> (e.g. <code>udemy_manual.png</code>).<br>
-         - Select "Manual Screenshot" and upload it.<br>
-      3. <b>Supported images:</b> PNG or JPEG, ideally full-page.<br>
-      4. <b>Repeat:</b> Add as many URLs as you want.
-    </div>
-    <form method="POST" enctype="multipart/form-data">
-      <label>Landing Pages:</label>
-      <div id="urls-list" class="urls-list"></div>
-      <button type="button" onclick="addUrlRow()" style="margin: 0 0 1em 0; background: #60a5fa; color: #fff; border-radius: 8px; padding: 0.5em 1.2em;">Add Another URL</button>
-      <label>Prompt for Gemini (optional):</label>
-      <textarea name="prompt" rows="4" placeholder="e.g., Describe the value prop, CTA, and trust elements above the fold...">{{prompt or default_prompt}}</textarea>
-      <button type="submit">Run Analysis</button>
-    </form>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    {% if summary %}
-      <div class="result">
-        <h2>Analysis Summary:</h2>
-        <pre>{{summary}}</pre>
-        <a href="/download/csv">Download CSV</a>
-      </div>
-    {% endif %}
+<div class="container">
+  <h1>Landing Page Analyzer (Gemini + Playwright)</h1>
+  <div class="tip">
+    <b>How to upload manual screenshots?</b>
+    <ul class="tips-list">
+      <li>Open the webpage, hit <b>Print Screen</b> (or use a screenshot tool), save as PNG.</li>
+      <li>Name your image: <code>&lt;name&gt;_manual.png</code> (e.g. <code>udemy_manual.png</code>).</li>
+      <li>For best results: include only the visible ("above the fold") section.</li>
+    </ul>
+    <b>When do I need a manual screenshot?</b>
+    <ul class="tips-list">
+      <li>If the site requires login or blocks bots (e.g. Udemy, Brainstation), upload your own screenshot!</li>
+    </ul>
   </div>
+  <form method="POST" enctype="multipart/form-data">
+    <label>Landing Page URLs (one per line):</label>
+    <textarea name="urls" rows="4" required>{{urls or ""}}</textarea><br><br>
+    <label>Prompt for Gemini (optional, else default is used):</label>
+    <textarea name="prompt" rows="7" placeholder="Leave blank to use default prompt...">{{prompt or ""}}</textarea><br>
+    <div style="font-size: 0.95em; color: #888; margin-bottom: 1.5em;">
+      <b>Default prompt used if blank:</b> <br>
+      <code>{{default_prompt_example}}</code>
+    </div>
+    <label>Manual Screenshot Uploads:</label>
+    <div class="file-upload">
+      <input type="file" name="screenshots" multiple>
+    </div>
+    <button type="submit">Run Analysis</button>
+  </form>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if summary %}
+    <div class="result">
+      <h2>Analysis Summary:</h2>
+      <pre>{{summary}}</pre>
+      <a href="/download/csv">Download CSV</a>
+    </div>
+  {% endif %}
+</div>
 </body>
 </html>
 """
 
-# -- Gemini Analysis Function --
-def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
+def save_manual_screenshots(files):
+    uploaded_names = []
+    flushprint("save_manual_screenshots called")
+    for file in files.getlist("screenshots"):
+        flushprint("Got file:", file.filename)
+        if file.filename:
+            save_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+            file.save(save_path)
+            flushprint("Saved manual screenshot:", save_path)
+            uploaded_names.append(file.filename)
+    return uploaded_names
+
+def get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name, url, prompt_override=None):
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
         model = genai.GenerativeModel('gemini-2.5-pro')
         flushprint("GenAI model created")
         image = Image.open(io.BytesIO(image_bytes))
         flushprint("Image opened for Gemini")
+
         MAX_PIXELS = 16383
         if image.height > MAX_PIXELS:
             aspect_ratio = image.width / image.height
@@ -243,32 +170,31 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
             image = image.resize((new_width, new_height), Image.LANCZOS)
             flushprint("Image resized for Gemini API")
         image_for_api = image
+
         prompt_text_section = f"""
-        - **Text Content (first 15,000 characters):**
-        ---
-        {page_content[:15000]}
-        ---
-        """ if page_content else ""
-        prompt = prompt_override or "Describe the value prop, CTA, and trust elements above the fold..."
+- **Text Content (first 15,000 characters):**
+---
+{page_content[:15000]}
+---
+""" if page_content else ""
+
+        # This is where the default prompt is created per landing page
+        prompt = prompt_override or build_default_prompt(provider_name, url, prompt_text_section)
         flushprint("Sending prompt to Gemini")
         response = model.generate_content([prompt, image_for_api])
-        cleaned = response.text.strip()
-        flushprint("Gemini responded. Raw snippet:")
-        flushprint(cleaned[:400])
-        # Try to parse JSON if provided, else just return as plain text.
+
+        # If the model outputs JSON, try to load it
+        cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
         try:
-            return json.loads(cleaned)
+            return json.loads(cleaned_json)
         except Exception:
-            # Not JSON: return as {"Platform": ..., "response": ...}
-            return {
-                "Platform": provider_name,
-                "Response": cleaned
-            }
+            flushprint("Gemini response was:\n", response.text)
+            raise ValueError("Gemini response was not valid JSON: " + str(response.text[:400]))
+
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
         raise
 
-# -- Main analyzer function --
 def analyze_landing_pages(landing_pages, prompt_override=None):
     flushprint("analyze_landing_pages called")
     all_course_data = []
@@ -284,13 +210,15 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                 viewport={'width': 1920, 'height': 1080},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36'
             )
+
             for lp in landing_pages:
                 flushprint(f"Processing {lp['name']} ({lp['url']}) manual={lp.get('manual')}")
                 if lp.get("manual", False):
-                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{lp['name']}_manual.png")
+                    manual_file = f"{lp['name']}_manual.png"
+                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
                     if not os.path.exists(manual_path):
-                        flushprint(f"Manual screenshot not found: {manual_path}")
-                        all_course_data.append({"Platform": lp['name'], "error": f"Manual screenshot '{manual_path}' not found."})
+                        flushprint(f"Manual screenshot not found: {manual_file}")
+                        all_course_data.append({"Platform": lp['name'], "error": f"Manual screenshot '{manual_file}' not found."})
                         continue
                     with open(manual_path, "rb") as f:
                         image_bytes = f.read()
@@ -333,81 +261,48 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
     summary = df.to_string(index=False)
     return summary, os.path.join(output_dir, "competitive_analysis_data.csv")
 
-# --- Main routes ---
 @app.route("/", methods=["GET", "POST"])
 def index():
     flushprint("Index route called:", request.method)
     summary = None
     error = None
-    csv_path = None
     prompt = ''
-    default_prompt = f"""
-    As a digital marketing and CRO (Conversion Rate Optimization) expert, analyze the provided landing page screenshot and text content for the company '{provider_name}'.
-    Your goal is to populate a structured JSON object based on the visual and textual evidence.
+    urls = ''
+    csv_path = None
 
-    **Webpage Information:**
-    - **Provider:** {provider_name}
-    - **URL:** {url}
-    {prompt_text_section}
-
-    **Instructions:**
-    Carefully examine the **screenshot** for visual layout, design elements, and "above the fold" content.
-    If text content is provided, use it to extract specific details and copy. If not, rely only on the screenshot.
-    Fill out the following JSON object.
-
-    If you cannot determine a value, use "Not Found" or "N/A".
-
-    **JSON Structure to Populate:**
-    {{
-      "Platform": "{provider_name}",
-      "LP Link": "{url}",
-      "Main Offer": "Describe the main value proposition or product offering.",
-      "Purchase or Lead Gen Form": "Classify the primary conversion goal. If the main button leads directly to a payment form, classify as 'Direct Purchase'. If it leads to a free sign-up, a free trial, or a form to request information/a demo, classify as 'Lead Generation'. If it is a simple sign-up to start a free course, classify as 'Low-friction sign-up'.",
-      "Primary CTA": "Identify the most prominent, visually emphasized call-to-action button above the fold. This is usually the largest button with the brightest color. Provide its exact text.",
-      "Above the Fold - Headline": "The main headline text visible at the top of the page.",
-      "Above the Fold - Trust Elements": "List any trust signals visible without scrolling (e.g., logos of partners, ratings, student testimonials, 'Trusted by X users').",
-      "Above the Fold - Other Elements": "List other key elements visible (e.g., sub-headlines, short descriptions, benefits).",
-      "Above the Fold - Creative (Yes/No)": "Is there a prominent hero image, video, or illustration? (Yes/No)",
-      "Above the Fold - Creative Type": "If yes, describe the creative (e.g., 'Hero image with testimonial', 'Course preview video', 'Illustration of data concepts').",
-      "Above the Fold - Creative Position": "Where is the creative located? (e.g., 'Right side of the hero section', 'Background video').",
-      "Above the Fold - # of CTAs": "Count all distinct call-to-action buttons AND text links (e.g., 'Enroll Now', 'Request Info', 'Financial aid available') visible above the fold.",
-      "Above the Fold - CTA / Form Position": "Describe the position of the primary CTA or lead form.",
-      "Primary CTA Just for Free Trial": "Does the primary CTA explicitly mention a free trial or is it for direct enrollment/purchase? (e.g., 'Start Free Trial', 'Enroll Now').",
-      "Secondary CTA": "Identify the second-most prominent call-to-action. This could be a button with a less vibrant color, an outlined button, or a prominent text link like 'Book a Call' or 'Explore Syllabus'. Provide its exact text.",
-      "Clickable Logo": "Is the main logo in the navigation bar clickable? (Assume Yes if it's standard practice).",
-      "Navigation Bar": "Are there navigation links at the top of the page? (Yes/No)"
-    }}
-
-    Return ONLY the valid JSON object, with no other text, comments, or markdown formatting.
-    """
+    # Show an EXAMPLE of the default prompt for UI display
+    default_prompt_example = build_default_prompt("example_provider", "https://example.com")[:300] + "..."
 
     if request.method == "POST":
-        urls = request.form.getlist("url[]")
-        modes = request.form.getlist("mode[]")
-        screenshots = request.files.getlist("screenshot[]")
-        flushprint(f"POST urls: {urls}")
-        flushprint(f"POST modes: {modes}")
+        flushprint("POST data:", request.form)
+        urls = request.form.get("urls")
+        prompt = request.form.get("prompt")
+        uploaded_files = request.files
+
+        save_manual_screenshots(uploaded_files)
+        flushprint("Manual screenshots saved (if any)")
+
+        url_list = [u.strip() for u in (urls or "").splitlines() if u.strip()]
+        flushprint("Parsed URLs:", url_list)
         landing_pages = []
-        for idx, url in enumerate(urls):
-            mode = modes[idx]
-            name = url.split("//")[-1].split("/")[1] if "/" in url.split("//")[-1] else url.split("//")[-1]
-            name = name.lower().replace(".", "_").replace("-", "_")
-            if mode == "manual" and screenshots[idx] and screenshots[idx].filename:
-                manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{name}_manual.png")
-                screenshots[idx].save(manual_path)
-                landing_pages.append({"name": name, "url": url, "manual": True})
-            else:
-                landing_pages.append({"name": name, "url": url, "manual": False})
-        prompt = request.form.get("prompt") or default_prompt
+        for url in url_list:
+            base_name = url.split("//")[-1].split("/")[1] if "/" in url.split("//")[-1] else url.split("//")[-1]
+            name = base_name.lower().replace(".", "_").replace("-", "_")
+            manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{name}_manual.png")
+            landing_pages.append({
+                "name": name,
+                "url": url,
+                "manual": os.path.exists(manual_path)
+            })
         flushprint("Landing pages dict:", landing_pages)
         try:
-            summary, csv_path = analyze_landing_pages(landing_pages, prompt)
+            summary, csv_path = analyze_landing_pages(landing_pages, prompt if prompt else None)
             flushprint("Analysis summary done.")
         except Exception as e:
             error = str(e)
             flushprint("Error in POST analyze_landing_pages:", e)
 
-    return render_template_string(HTML, summary=summary, error=error, prompt=prompt, default_prompt=default_prompt)
+    return render_template_string(HTML, summary=summary, error=error, urls=urls, prompt=prompt, default_prompt_example=default_prompt_example)
 
 @app.route('/download/csv')
 def download_csv():
