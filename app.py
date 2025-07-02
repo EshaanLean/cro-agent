@@ -9,7 +9,6 @@ def flushprint(*args, **kwargs):
     print(*args, **kwargs)
     sys.stdout.flush()
 
-# --- Dynamic default prompt as a FUNCTION! ---
 def build_default_prompt(provider_name, url, prompt_text_section=""):
     return f"""
 As a digital marketing and CRO (Conversion Rate Optimization) expert, analyze the provided landing page screenshot and text content for the company '{provider_name}'.
@@ -80,7 +79,6 @@ app.config['UPLOAD_FOLDER'] = "manual_screenshots"
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 flushprint("UPLOAD_FOLDER checked/created")
 
-# --- Basic HTML for UI (customize for your needs) ---
 HTML = """
 <!DOCTYPE html>
 <html>
@@ -88,44 +86,90 @@ HTML = """
   <title>Landing Page Analyzer (Gemini + Playwright)</title>
   <style>
     body { font-family: Arial; margin: 2em; background: #fafaff; }
-    .container { max-width: 740px; margin: auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 18px #ececec; padding: 2em 2em 1em 2em;}
+    .container { max-width: 830px; margin: auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 18px #ececec; padding: 2em 2em 1em 2em;}
     textarea, input[type=text] { width: 100%; font-size: 1em; }
     .file-upload { margin-bottom: 1em; }
     label { font-weight: bold; }
     .result { background: #f5f7fc; padding: 1em; margin-top: 1em; border-radius: 8px; }
     .error { color: red; margin: 1em 0; }
-    .tip { color: #444; font-size: 0.98em; background: #eaf3ff; padding: 8px 14px; border-radius: 7px; margin: 8px 0;}
+    .tip { color: #444; font-size: 0.98em; background: #eaf3ff; padding: 10px 16px; border-radius: 7px; margin: 18px 0 12px 0;}
     .tips-list {margin: 0.2em 0 1.3em 0; padding-left: 1.2em;}
+    code { background: #eef3f7; padding: 0.1em 0.35em; border-radius: 5px;}
     h1 {margin-top: 0.3em;}
+    .url-group {background: #f4f7fa; border-radius: 6px; padding: 1em 1em 0.5em 1em; margin-bottom: 1em;}
+    .manual-toggle {margin-bottom: 0.5em;}
+    .manual-upload {display: none;}
   </style>
+  <script>
+    function updateUrlFields() {
+      let urlBox = document.getElementById('urls');
+      let urlList = urlBox.value.split('\\n').filter(u => u.trim().length > 0);
+      let urlFieldsDiv = document.getElementById('url-fields');
+      urlFieldsDiv.innerHTML = "";
+      for (let i = 0; i < urlList.length; i++) {
+        let url = urlList[i].trim();
+        let html = `
+        <div class="url-group" id="urlgroup${i}">
+          <b>URL:</b> <span>${url}</span>
+          <div class="manual-toggle">
+            <label>
+              <input type="radio" name="mode_${i}" value="auto" checked onchange="toggleManualUpload(${i})"> Auto-capture
+            </label>
+            &nbsp;
+            <label>
+              <input type="radio" name="mode_${i}" value="manual" onchange="toggleManualUpload(${i})"> Manual Screenshot
+            </label>
+          </div>
+          <div class="file-upload manual-upload" id="manual-upload-${i}">
+            <input type="file" name="screenshots_${i}">
+            <small>Upload a PNG screenshot named <code>&lt;name&gt;_manual.png</code></small>
+          </div>
+        </div>
+        `;
+        urlFieldsDiv.innerHTML += html;
+      }
+    }
+    function toggleManualUpload(idx) {
+      let isManual = document.querySelector(`input[name="mode_${idx}"][value="manual"]`).checked;
+      document.getElementById('manual-upload-' + idx).style.display = isManual ? "block" : "none";
+    }
+    window.onload = function() { updateUrlFields(); }
+  </script>
 </head>
 <body>
 <div class="container">
   <h1>Landing Page Analyzer (Gemini + Playwright)</h1>
   <div class="tip">
-    <b>How to upload manual screenshots?</b>
+    <b>How to take a screenshot in Chrome:</b>
     <ul class="tips-list">
-      <li>Open the webpage, hit <b>Print Screen</b> (or use a screenshot tool), save as PNG.</li>
-      <li>Name your image: <code>&lt;name&gt;_manual.png</code> (e.g. <code>udemy_manual.png</code>).</li>
-      <li>For best results: include only the visible ("above the fold") section.</li>
+      <li>
+        <b>Method 1 (using Developer Tools):</b> Open the webpage, right-click and select "Inspect" (or press <b>Ctrl+Shift+I</b>), then press <b>Ctrl+Shift+P</b> (Cmd+Shift+P on Mac) to open the command palette. Type <b>screenshot</b> and choose the desired option (e.g. <i>Capture full size screenshot</i>).
+      </li>
+      <li>
+        <b>Method 2 (Web Capture):</b> Click the three dots (<b>⋮</b>) in the top-right of Chrome, select <b>More tools</b>, then <b>Web capture</b>. You can select an area or capture the full page.
+      </li>
+      <li>
+        <b>Naming convention:</b> Save your screenshot as <code>&lt;name&gt;_manual.png</code> (e.g., <code>udemy_manual.png</code>).
+      </li>
+      <li>
+        For best results: include only the visible ("above the fold") section, unless you want the whole page.
+      </li>
     </ul>
     <b>When do I need a manual screenshot?</b>
     <ul class="tips-list">
-      <li>If the site requires login or blocks bots (e.g. Udemy, Brainstation), upload your own screenshot!</li>
+      <li>
+        If the site <b>requires login</b> or <b>blocks bots</b> (e.g., Cloudflare, DataDome, PerimeterX, Akamai Bot Manager, or protected platforms like Udemy, Brainstation, Coursera), upload your own screenshot!
+      </li>
     </ul>
   </div>
   <form method="POST" enctype="multipart/form-data">
     <label>Landing Page URLs (one per line):</label>
-    <textarea name="urls" rows="4" required>{{urls or ""}}</textarea><br><br>
-    <label>Prompt for Gemini (optional, else default is used):</label>
-    <textarea name="prompt" rows="7" placeholder="Leave blank to use default prompt...">{{prompt or ""}}</textarea><br>
+    <textarea name="urls" id="urls" rows="4" required oninput="updateUrlFields();">{{urls or ""}}</textarea>
+    <div id="url-fields"></div>
+    <label>Prompt for Gemini (editable):</label>
+    <textarea name="prompt" rows="18" required>{{prompt or default_prompt_text}}</textarea>
     <div style="font-size: 0.95em; color: #888; margin-bottom: 1.5em;">
-      <b>Default prompt used if blank:</b> <br>
-      <code>{{default_prompt_example}}</code>
-    </div>
-    <label>Manual Screenshot Uploads:</label>
-    <div class="file-upload">
-      <input type="file" name="screenshots" multiple>
+      <b>Edit the prompt as needed above, or use as-is.</b>
     </div>
     <button type="submit">Run Analysis</button>
   </form>
@@ -142,17 +186,22 @@ HTML = """
 </html>
 """
 
-def save_manual_screenshots(files):
-    uploaded_names = []
-    flushprint("save_manual_screenshots called")
-    for file in files.getlist("screenshots"):
-        flushprint("Got file:", file.filename)
-        if file.filename:
-            save_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-            file.save(save_path)
-            flushprint("Saved manual screenshot:", save_path)
-            uploaded_names.append(file.filename)
-    return uploaded_names
+def get_url_name(url):
+    base = url.split("//")[-1]
+    base_name = base.split("/")[1] if "/" in base else base
+    return base_name.lower().replace(".", "_").replace("-", "_")
+
+def save_manual_screenshots(files, url_modes, url_names):
+    uploaded = []
+    for idx, mode in enumerate(url_modes):
+        if mode == "manual":
+            field = f"screenshots_{idx}"
+            file = files.get(field)
+            if file and file.filename:
+                save_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+                file.save(save_path)
+                uploaded.append(file.filename)
+    return uploaded
 
 def get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name, url, prompt_override=None):
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
@@ -178,26 +227,23 @@ def get_multimodal_analysis_from_gemini(page_content, image_bytes, provider_name
 ---
 """ if page_content else ""
 
-        # This is where the default prompt is created per landing page
         prompt = prompt_override or build_default_prompt(provider_name, url, prompt_text_section)
         flushprint("Sending prompt to Gemini")
         response = model.generate_content([prompt, image_for_api])
 
-        # If the model outputs JSON, try to load it
         cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
         try:
             return json.loads(cleaned_json)
         except Exception:
             flushprint("Gemini response was:\n", response.text)
             raise ValueError("Gemini response was not valid JSON: " + str(response.text[:400]))
-
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
         raise
 
 def analyze_landing_pages(landing_pages, prompt_override=None):
     flushprint("analyze_landing_pages called")
-    all_course_data = []
+    all_data = []
     output_dir = "landing_page_analysis"
     os.makedirs(output_dir, exist_ok=True)
     flushprint(f"Output dir ready: {output_dir}")
@@ -206,10 +252,8 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
         with sync_playwright() as p:
             flushprint("Playwright launched")
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36'
-            )
+            context = browser.new_context(viewport={'width': 1920, 'height': 1080},
+                                         user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36')
 
             for lp in landing_pages:
                 flushprint(f"Processing {lp['name']} ({lp['url']}) manual={lp.get('manual')}")
@@ -218,18 +262,18 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                     manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
                     if not os.path.exists(manual_path):
                         flushprint(f"Manual screenshot not found: {manual_file}")
-                        all_course_data.append({"Platform": lp['name'], "error": f"Manual screenshot '{manual_file}' not found."})
+                        all_data.append({"Platform": lp['name'], "error": f"Manual screenshot '{manual_file}' not found."})
                         continue
                     with open(manual_path, "rb") as f:
                         image_bytes = f.read()
                     page_content = ""
                     try:
-                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
-                        all_course_data.append(structured_data)
+                        structured = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
+                        all_data.append(structured)
                         flushprint(f"Gemini result added for {lp['name']}")
                     except Exception as e:
                         flushprint(f"Error for manual {lp['name']}:", e)
-                        all_course_data.append({"Platform": lp['name'], "error": str(e)})
+                        all_data.append({"Platform": lp['name'], "error": str(e)})
                 else:
                     page = context.new_page()
                     try:
@@ -241,12 +285,12 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                         with open(screenshot_path, "rb") as f:
                             image_bytes = f.read()
                         page_content = page.inner_text('body')
-                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
-                        all_course_data.append(structured_data)
+                        structured = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
+                        all_data.append(structured)
                         flushprint(f"Playwright + Gemini result added for {lp['name']}")
                     except Exception as e:
                         flushprint(f"Error for auto {lp['name']}:", e)
-                        all_course_data.append({"Platform": lp['name'], "error": str(e)})
+                        all_data.append({"Platform": lp['name'], "error": str(e)})
                     finally:
                         page.close()
             browser.close()
@@ -255,7 +299,7 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
         flushprint("Fatal error in analyze_landing_pages:", e)
         raise
 
-    df = pd.DataFrame(all_course_data)
+    df = pd.DataFrame(all_data)
     df.to_csv(os.path.join(output_dir, "competitive_analysis_data.csv"), index=False)
     flushprint("CSV saved")
     summary = df.to_string(index=False)
@@ -270,8 +314,7 @@ def index():
     urls = ''
     csv_path = None
 
-    # Show an EXAMPLE of the default prompt for UI display
-    default_prompt_example = build_default_prompt("example_provider", "https://example.com")[:300] + "..."
+    default_prompt_text = build_default_prompt("provider_name", "https://example.com")
 
     if request.method == "POST":
         flushprint("POST data:", request.form)
@@ -279,20 +322,24 @@ def index():
         prompt = request.form.get("prompt")
         uploaded_files = request.files
 
-        save_manual_screenshots(uploaded_files)
+        url_list = [u.strip() for u in (urls or "").splitlines() if u.strip()]
+        url_modes = []
+        url_names = []
+        for idx, url in enumerate(url_list):
+            mode = request.form.get(f"mode_{idx}", "auto")
+            url_modes.append(mode)
+            url_names.append(get_url_name(url))
+
+        save_manual_screenshots(uploaded_files, url_modes, url_names)
         flushprint("Manual screenshots saved (if any)")
 
-        url_list = [u.strip() for u in (urls or "").splitlines() if u.strip()]
-        flushprint("Parsed URLs:", url_list)
         landing_pages = []
-        for url in url_list:
-            base_name = url.split("//")[-1].split("/")[1] if "/" in url.split("//")[-1] else url.split("//")[-1]
-            name = base_name.lower().replace(".", "_").replace("-", "_")
-            manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{name}_manual.png")
+        for i, url in enumerate(url_list):
+            name = url_names[i]
             landing_pages.append({
                 "name": name,
                 "url": url,
-                "manual": os.path.exists(manual_path)
+                "manual": (url_modes[i] == "manual")
             })
         flushprint("Landing pages dict:", landing_pages)
         try:
@@ -302,7 +349,7 @@ def index():
             error = str(e)
             flushprint("Error in POST analyze_landing_pages:", e)
 
-    return render_template_string(HTML, summary=summary, error=error, urls=urls, prompt=prompt, default_prompt_example=default_prompt_example)
+    return render_template_string(HTML, summary=summary, error=error, urls=urls, prompt=prompt, default_prompt_text=default_prompt_text)
 
 @app.route('/download/csv')
 def download_csv():
