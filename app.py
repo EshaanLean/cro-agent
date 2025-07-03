@@ -204,16 +204,22 @@ def save_manual_screenshots(files):
     return uploaded_names
 
 def extract_site_name(url):
-    """Extract a clean site name from URL"""
+    """Extract the main domain part for use as a site name (e.g., 'udemy' from 'www.udemy.com')"""
     try:
         domain_part = url.split("//")[-1].split("/")[0]
-        if "." in domain_part:
-            base_name = domain_part.split(".")[0]
+        parts = domain_part.split(".")
+        if len(parts) >= 2:
+            # Get second-to-last part (e.g. 'udemy' from 'www.udemy.com')
+            base_name = parts[-2]
         else:
-            base_name = domain_part
-        return base_name.lower().replace("-", "_").replace(".", "_")
-    except:
+            base_name = parts[0]
+        clean_name = base_name.lower().replace("-", "_").replace(".", "_")
+        flushprint(f"Extracted site name '{clean_name}' from URL '{url}'")
+        return clean_name
+    except Exception as e:
+        flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
+
 
 # -- Gemini Analysis Function --
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
