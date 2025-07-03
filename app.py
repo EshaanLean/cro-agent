@@ -42,13 +42,17 @@ def _prepare_image(pil_img: Image.Image) -> Image.Image:
         pil_img = ImageOps.exif_transpose(pil_img.convert("RGB"))
     return pil_img
 
-_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
-
 def _extract_json(text: str) -> dict:
-    match = _JSON_RE.search(text)
-    if not match:
-        raise ValueError("No JSON object found in model response.")
-    return json.loads(match.group(0))
+    # find the first “{” and the last “}”
+    start = text.find('{')
+    end   = text.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        # include a bit of the raw response for debugging
+        snippet = text.strip().replace('\n', ' ')[:200]
+        raise ValueError(f"No JSON object found in model response. Raw output was: {snippet!r}")
+    json_str = text[start:end+1]
+    return json.loads(json_str)
+
 
 # ------------- HTML TEMPLATE --------------------
 HTML = """
