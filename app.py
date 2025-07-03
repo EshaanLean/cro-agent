@@ -43,15 +43,60 @@ def _prepare_image(pil_img: Image.Image) -> Image.Image:
     return pil_img
 
 def _extract_json(text: str) -> dict:
-    # find the first “{” and the last “}”
+    """Enhanced JSON extraction with multiple fallback methods"""
+    flushprint(f"Attempting to extract JSON from response (length: {len(text)})")
+    
+    # Method 1: Find JSON between ```json and ``` markers
+    json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if json_match:
+        flushprint("Found JSON in code block")
+        try:
+            return json.loads(json_match.group(1))
+        except json.JSONDecodeError as e:
+            flushprint(f"JSON decode error in code block: {e}")
+    
+    # Method 2: Find JSON between { and } (original method)
     start = text.find('{')
-    end   = text.rfind('}')
-    if start == -1 or end == -1 or end <= start:
-        # include a bit of the raw response for debugging
-        snippet = text.strip().replace('\n', ' ')[:200]
-        raise ValueError(f"No JSON object found in model response. Raw output was: {snippet!r}")
-    json_str = text[start:end+1]
-    return json.loads(json_str)
+    end = text.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        json_str = text[start:end+1]
+        flushprint("Found JSON brackets, attempting parse")
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            flushprint(f"JSON decode error: {e}")
+    
+    # Method 3: Look for multiple JSON objects and take the first valid one
+    json_objects = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text)
+    for json_candidate in json_objects:
+        try:
+            result = json.loads(json_candidate)
+            flushprint("Found valid JSON object")
+            return result
+        except json.JSONDecodeError:
+            continue
+    
+    # Method 4: Try to extract key-value pairs and construct JSON
+    flushprint("Attempting to construct JSON from key-value pairs")
+    try:
+        lines = text.split('\n')
+        json_data = {}
+        for line in lines:
+            if ':' in line and not line.strip().startswith('#'):
+                key_match = re.search(r'"([^"]+)":\s*"([^"]*)"', line)
+                if key_match:
+                    json_data[key_match.group(1)] = key_match.group(2)
+        
+        if json_data:
+            flushprint(f"Constructed JSON from {len(json_data)} key-value pairs")
+            return json_data
+    except Exception as e:
+        flushprint(f"Error constructing JSON: {e}")
+    
+    # If all methods fail, return error with snippet
+    snippet = text.strip().replace('\n', ' ')[:500]
+    flushprint(f"All JSON extraction methods failed. Response snippet: {snippet}")
+    raise ValueError(f"No valid JSON found in model response. Response snippet: {snippet}")
 
 
 # ------------- HTML TEMPLATE --------------------
@@ -236,56 +281,85 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
 ---""" if page_content else ""
 
         default_prompt = f"""
-As a digital marketing and CRO expert, analyze this landing page screenshot and text content for '{provider_name}'.
+You are a digital marketing and CRO expert. Analyze this landing page screenshot and text content for '{provider_name}'.
+
+**CRITICAL INSTRUCTIONS:**
+1. You MUST respond with ONLY valid JSON - no other text, no explanations, no markdown
+2. Do not include any text before or after the JSON
+3. The JSON must be properly formatted and parseable
 
 **Webpage Information**
 - **Provider:** {provider_name}
 - **URL:** {url}
 {prompt_text_section}
 
-Return your answer **only** as valid JSON matching this schema (no markdown, no code fences):
+Return ONLY this JSON structure (no other text):
 
 {{
-          "Platform": "{provider_name}",
-          "URL": "{url}",
-          "Main_Offer": "Describe the main value proposition or product offering",
-          "Primary_CTA": "Primary call-to-action button text and placement",
-          "Secondary_CTA": "Secondary call-to-action if visible",
-          "Headline": "Main headline visible above the fold",
-          "Subheadline": "Supporting headline or tagline",
-          "Trust_Elements": "Trust signals like logos, testimonials, ratings, social proof",
-          "Visual_Design": "Description of visual design, colors, layout style",
-          "Above_Fold_Elements": "Key elements visible without scrolling",
-          "Pricing_Info": "Any pricing information visible",
-          "Course_Type": "Type of course, program, or service offered",
-          "Target_Audience": "Apparent target audience based on messaging",
-          "Unique_Selling_Points": "Key differentiators or unique features mentioned",
-          "Lead_Generation_Type": "Type of conversion (direct purchase, free trial, lead gen, etc.)",
-          "Form_Placement": "Position and type of forms visible",
-          "Navigation_Style": "Description of navigation menu and structure",
-          "Overall_Strategy": "Assessment of overall conversion strategy and approach"
+  "Platform": "{provider_name}",
+  "URL": "{url}",
+  "Main_Offer": "Describe the main value proposition or product offering",
+  "Primary_CTA": "Primary call-to-action button text and placement",
+  "Secondary_CTA": "Secondary call-to-action if visible",
+  "Headline": "Main headline visible above the fold",
+  "Subheadline": "Supporting headline or tagline",
+  "Trust_Elements": "Trust signals like logos, testimonials, ratings, social proof",
+  "Visual_Design": "Description of visual design, colors, layout style",
+  "Above_Fold_Elements": "Key elements visible without scrolling",
+  "Pricing_Info": "Any pricing information visible",
+  "Course_Type": "Type of course, program, or service offered",
+  "Target_Audience": "Apparent target audience based on messaging",
+  "Unique_Selling_Points": "Key differentiators or unique features mentioned",
+  "Lead_Generation_Type": "Type of conversion (direct purchase, free trial, lead gen, etc.)",
+  "Form_Placement": "Position and type of forms visible",
+  "Navigation_Style": "Description of navigation menu and structure",
+  "Overall_Strategy": "Assessment of overall conversion strategy and approach"
 }}"""
 
         prompt = prompt_override or default_prompt
+        if prompt_override:
+            # If custom prompt, ensure it asks for JSON format
+            prompt = f"{prompt_override}\n\nIMPORTANT: Return your analysis ONLY as valid JSON with these fields: Platform, URL, Main_Offer, Primary_CTA, Secondary_CTA, Headline, Subheadline, Trust_Elements, Visual_Design, Above_Fold_Elements, Pricing_Info, Course_Type, Target_Audience, Unique_Selling_Points, Lead_Generation_Type, Form_Placement, Navigation_Style, Overall_Strategy"
 
+        flushprint("Sending request to Gemini...")
         response = model.generate_content([prompt, pil_img])
 
         if not response.text or not response.text.strip():
             flushprint("Empty response – retrying without image")
             response = model.generate_content(prompt)
 
+        flushprint(f"Received response (length: {len(response.text)})")
+        
         try:
             result_dict = _extract_json(response.text)
+            # Ensure required fields are present
             result_dict.update({"Platform": provider_name, "URL": url})
             flushprint("JSON parsed successfully")
             return result_dict
         except Exception as e:
             flushprint(f"JSON parse error: {e}")
+            # Return a fallback structure with error info
             return {
                 "Platform": provider_name,
                 "URL": url,
+                "Main_Offer": "Analysis failed - JSON parse error",
+                "Primary_CTA": "N/A",
+                "Secondary_CTA": "N/A", 
+                "Headline": "N/A",
+                "Subheadline": "N/A",
+                "Trust_Elements": "N/A",
+                "Visual_Design": "N/A",
+                "Above_Fold_Elements": "N/A",
+                "Pricing_Info": "N/A",
+                "Course_Type": "N/A",
+                "Target_Audience": "N/A",
+                "Unique_Selling_Points": "N/A",
+                "Lead_Generation_Type": "N/A",
+                "Form_Placement": "N/A",
+                "Navigation_Style": "N/A",
+                "Overall_Strategy": "N/A",
                 "error": f"JSON parse error: {str(e)}",
-                "raw_response": response.text[:500]
+                "raw_response_snippet": response.text[:200] if response.text else "No response"
             }
 
     except Exception as e:
@@ -293,6 +367,22 @@ Return your answer **only** as valid JSON matching this schema (no markdown, no 
         return {
             "Platform": provider_name,
             "URL": url,
+            "Main_Offer": "Analysis failed - API error",
+            "Primary_CTA": "N/A",
+            "Secondary_CTA": "N/A",
+            "Headline": "N/A", 
+            "Subheadline": "N/A",
+            "Trust_Elements": "N/A",
+            "Visual_Design": "N/A",
+            "Above_Fold_Elements": "N/A",
+            "Pricing_Info": "N/A",
+            "Course_Type": "N/A",
+            "Target_Audience": "N/A",
+            "Unique_Selling_Points": "N/A",
+            "Lead_Generation_Type": "N/A",
+            "Form_Placement": "N/A",
+            "Navigation_Style": "N/A",
+            "Overall_Strategy": "N/A",
             "error": f"Gemini API error: {str(e)}"
         }
 
