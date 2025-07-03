@@ -5,6 +5,7 @@ import sys
 import pandas as pd
 from flask import Flask, request, render_template_string, send_file, jsonify
 import zipfile
+import tldextract
 from datetime import datetime
 
 # --- Flushed print utility ---
@@ -203,17 +204,20 @@ def save_manual_screenshots(files):
             uploaded_names.append(file.filename)
     return uploaded_names
 
+
 def extract_site_name(url):
-    """Extract a clean site name from URL"""
+    """Extracts the main domain (e.g., 'udemy' from 'www.udemy.com', 'example' from 'example.co.uk')."""
     try:
-        domain_part = url.split("//")[-1].split("/")[0]
-        if "." in domain_part:
-            base_name = domain_part.split(".")[0]
-        else:
-            base_name = domain_part
-        return base_name.lower().replace("-", "_").replace(".", "_")
-    except:
+        ext = tldextract.extract(url)
+        # ext.domain is the main part of the domain
+        clean_name = ext.domain.lower().replace("-", "_").replace(".", "_")
+        flushprint(f"Extracted site name '{clean_name}' from URL '{url}'")
+        return clean_name
+    except Exception as e:
+        flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
+
+
 
 # -- Gemini Analysis Function --
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
