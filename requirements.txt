@@ -3,3 +3,5 @@ pandas
 pillow
 google-generativeai
 playwright
+tldextract
+
