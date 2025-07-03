@@ -243,7 +243,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
 
         default_analysis_prompt = f"""
         As a digital marketing and CRO expert, analyze this landing page screenshot and text content for '{provider_name}'.
-        
+
         **Webpage Information:**
         - **Provider:** {provider_name}
         - **URL:** {url}
@@ -275,14 +275,18 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
         """
 
         prompt = prompt_override or default_analysis_prompt
-        
-        response = model.generate_content([prompt, image])
-        
-        if not response.text:
-            raise Exception("Empty response from Gemini API")
-            
+
+        # Build valid multimodal content
+        response = model.generate_content([
+            {"text": prompt},
+            {"image": image}
+        ])
+
+        if not hasattr(response, 'text') or not response.text or not response.text.strip():
+            raise Exception("Gemini API returned empty or invalid response")
+
         cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
-        
+
         try:
             result = json.loads(cleaned_json)
             result["Platform"] = provider_name
@@ -297,7 +301,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
                 "error": f"JSON parse error: {str(e)}",
                 "raw_response": cleaned_json[:500]
             }
-            
+
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
         return {
@@ -305,6 +309,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
             "URL": url,
             "error": f"Gemini API error: {str(e)}"
         }
+
 
 # -- Generate Summary Report --
 def generate_summary_report(course_data_df: pd.DataFrame, client_name: str) -> str:
