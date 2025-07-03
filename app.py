@@ -7,7 +7,6 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
-
 UPLOAD_FOLDER = "manual_screenshots"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 CSV_FILE = "competitive_analysis_results.csv"
@@ -32,7 +31,7 @@ def take_screenshot(url, save_path):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(url, timeout=60000)  # 60s timeout for slow pages
+            page.goto(url, timeout=60000)
             page.screenshot(path=save_path, full_page=True)
             browser.close()
         flushprint(f"Auto screenshot saved for {url} -> {save_path}")
@@ -178,129 +177,68 @@ Summarize the strategic advantage these changes would unlock.
 Present your response in a clean, readable format with clear sections and actionable insights.
 """
 
-HTML = '''
+HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CRO Landing Page Analyzer</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin:40px; line-height: 1.5;}
-        input[type="text"] { font-size: 14px; padding: 5px; }
-        textarea { width: 98%; height: 350px; font-family: monospace; font-size: 13px; padding: 10px;}
-        th, td { padding:8px 6px; border: 1px solid #ddd; }
-        table { border-collapse: collapse; width: 100%; }
-        .tip { background:#f3f6fa; padding:14px 16px; margin:18px 0 22px 0; border-radius:7px; font-size:15px;}
-        .client-highlight { background:#ffe7a2; }
-        .error { background:#ffebee; color:#c62828; padding:14px 16px; margin:18px 0; border-radius:7px; }
-        .success { background:#e8f5e8; color:#2e7d32; padding:14px 16px; margin:18px 0; border-radius:7px; }
-        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        .form-section { margin: 20px 0; }
-    </style>
+<title>CRO Landing Page Analyzer</title>
 </head>
 <body>
-    <h1>🔍 CRO Landing Page Analyzer</h1>
-
-    <div class="tip">
-        <h3>📸 How to Take Screenshots (Manual Mode):</h3>
-        <ul>
-            <li><strong>Chrome Developer Tools:</strong> Right-click → "Inspect" (or Ctrl+Shift+I), then Ctrl+Shift+P (Cmd+Shift+P on Mac), type "screenshot", select "Capture full size screenshot".</li>
-            <li><strong>Web Capture:</strong> Chrome/Edge: Three dots → More tools → Web capture.</li>
-        </ul>
-        <h3>📝 Screenshot Naming Convention:</h3>
-        Use format: <code><strong>[key]_manual.png</strong></code><br>
-        Example for <code>https://www.udemy.com/course/data-analyst/</code>:<br>
-        <code><strong>www_udemy_com_course_data_analyst_manual.png</strong></code><br>
-        <br>
-        <strong>⚠️ Important:</strong> Use Manual mode for sites with login requirements or anti-bot protection (Cloudflare, etc.)
-    </div>
-
-    {% if error %}
-    <div class="error">
-        <strong>Error:</strong> {{ error }}
-    </div>
-    {% endif %}
-
-    {% if summary %}
-    <div class="success">
-        <strong>✅ Analysis completed!</strong> Results saved to CSV.
-    </div>
-    {% endif %}
-
-    <form method="post" enctype="multipart/form-data" class="form-section">
-        <h3>🎯 Landing Pages to Analyze</h3>
-        <table>
-            <tr>
-                <th style="width:50px">#</th>
-                <th style="width:400px">URL</th>
-                <th style="width:120px">Manual Screenshot?</th>
-                <th style="width:200px">Upload Screenshot (.png)</th>
-                <th style="width:80px">Client?</th>
-            </tr>
-            {% for entry in entries %}
-            <tr {% if entry.client %}class="client-highlight"{% endif %}>
-                <td>{{ loop.index }}</td>
-                <td>
-                    <input type="text" name="url_{{ loop.index0 }}" value="{{ entry.url }}" style="width:390px" placeholder="https://example.com/landing-page">
-                </td>
-                <td>
-                    <input type="checkbox" name="manual_{{ loop.index0 }}" {% if entry.manual %}checked{% endif %}>
-                </td>
-                <td>
-                    <input type="file" name="screenshot_{{ loop.index0 }}" accept=".png,.jpg,.jpeg">
-                </td>
-                <td>
-                    <input type="radio" name="client_idx" value="{{ loop.index0 }}" {% if entry.client %}checked{% endif %}>
-                </td>
-            </tr>
-            {% endfor %}
-        </table>
-        
-        <div style="margin: 15px 0;">
-            <button type="button" onclick="addRow()">➕ Add URL</button>
-            <button type="submit">🚀 Analyze Landing Pages</button>
-        </div>
-        
-        <div class="form-section">
-            <h3>⚙️ Analysis Prompt (Advanced)</h3>
-            <textarea name="prompt" placeholder="Enter custom analysis prompt...">{{ prompt }}</textarea>
-        </div>
-    </form>
-
-    {% if csv_path %}
-        <div class="form-section">
-            <h3>📊 Results & Next Steps</h3>
-            <p><a href="/download/csv" style="color: #007bff; text-decoration: none;">📥 Download CSV Results</a></p>
-            
-            <form action="/generate_summary" method="post" style="margin: 15px 0;">
-                <input type="hidden" name="csv_path" value="{{ csv_path }}">
-                <input type="hidden" name="client_name" value="{{ client_name }}">
-                <input type="hidden" name="client_lp" value="{{ client_url }}">
-                <input type="hidden" name="theme" value="Data Analytics">
-                <input type="hidden" name="competitor_urls" value="{{ competitor_urls }}">
-                <button type="submit">📋 Generate Strategic Summary & Recommendations</button>
-            </form>
-        </div>
-    {% endif %}
-
-    <script>
-        function addRow() {
-            const tbl = document.querySelector("table");
-            const rowCount = tbl.rows.length;
-            const row = tbl.insertRow(rowCount);
-            row.innerHTML = `
-                <td>${rowCount}</td>
-                <td><input type="text" name="url_${rowCount-1}" value="" style="width:390px" placeholder="https://example.com/landing-page"></td>
-                <td><input type="checkbox" name="manual_${rowCount-1}"></td>
-                <td><input type="file" name="screenshot_${rowCount-1}" accept=".png,.jpg,.jpeg"></td>
-                <td><input type="radio" name="client_idx" value="${rowCount-1}"></td>
-            `;
-        }
-    </script>
-
+<h2>CRO Landing Page Analyzer</h2>
+<form method="post" enctype="multipart/form-data">
+<table border="1" cellpadding="5">
+<tr>
+<th>#</th>
+<th>URL</th>
+<th>Manual Screenshot?</th>
+<th>Upload Screenshot (.png)</th>
+<th>Client?</th>
+</tr>
+{% for entry in entries %}
+<tr>
+<td>{{ loop.index }}</td>
+<td><input type="text" name="url_{{ loop.index0 }}" value="{{ entry.url }}" style="width:390px"></td>
+<td><input type="checkbox" name="manual_{{ loop.index0 }}" {% if entry.manual %}checked{% endif %}></td>
+<td><input type="file" name="screenshot_{{ loop.index0 }}" accept=".png,.jpg,.jpeg"></td>
+<td><input type="radio" name="client_idx" value="{{ loop.index0 }}" {% if entry.client %}checked{% endif %}></td>
+</tr>
+{% endfor %}
+</table>
+<button type="button" onclick="addRow()">Add URL</button>
+<button type="submit">Analyze</button>
+<br><br>
+<textarea name="prompt" style="width:98%;height:180px;">{{ prompt }}</textarea>
+</form>
+{% if csv_path %}
+<br>
+<a href="/download/csv">Download CSV</a>
+<br><br>
+<form action="/generate_summary" method="post">
+<input type="hidden" name="csv_path" value="{{ csv_path }}">
+<input type="hidden" name="client_name" value="{{ client_name }}">
+<input type="hidden" name="client_lp" value="{{ client_url }}">
+<input type="hidden" name="theme" value="Data Analytics">
+<input type="hidden" name="competitor_urls" value="{{ competitor_urls }}">
+<button type="submit">Generate Summary & Recommendations</button>
+</form>
+{% endif %}
+<script>
+function addRow() {
+    const tbl = document.querySelector("table");
+    const rowCount = tbl.rows.length;
+    const row = tbl.insertRow(rowCount);
+    row.innerHTML = `
+        <td>${rowCount}</td>
+        <td><input type="text" name="url_${rowCount-1}" value="" style="width:390px"></td>
+        <td><input type="checkbox" name="manual_${rowCount-1}"></td>
+        <td><input type="file" name="screenshot_${rowCount-1}" accept=".png,.jpg,.jpeg"></td>
+        <td><input type="radio" name="client_idx" value="${rowCount-1}"></td>
+    `;
+}
+</script>
 </body>
 </html>
-'''
+"""
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -313,12 +251,13 @@ def index():
     client_url = ""
     client_name = ""
     competitor_urls = ""
-
+    
     if request.method == "POST":
         try:
             prompt = request.form.get("prompt") or default_prompt
             i = 0
             client_idx = request.form.get("client_idx")
+            
             while True:
                 url = request.form.get(f"url_{i}")
                 if not url:
@@ -335,7 +274,7 @@ def index():
                         "client": is_client
                     })
                 i += 1
-
+            
             if not entries:
                 error = "Please provide at least one URL to analyze."
             else:
@@ -347,8 +286,7 @@ def index():
                         filepath = os.path.join(UPLOAD_FOLDER, filename)
                         file.save(filepath)
                         flushprint(f"Saved manual screenshot: {filepath}")
-
-                # Analyze landing pages (with auto-screenshot support)
+                
                 results, csv_path = analyze_landing_pages(entries, prompt)
                 if results:
                     summary = "Analysis completed successfully!"
@@ -367,7 +305,7 @@ def index():
             {"url": "", "key": "", "manual": False, "client": False},
             {"url": "", "key": "", "manual": False, "client": False},
         ]
-
+    
     return render_template_string(
         HTML,
         prompt=prompt,
@@ -412,28 +350,7 @@ def generate_summary():
         response = model.generate_content(prompt)
         summary_text = response.text
         
-        return render_template_string("""
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Strategic Summary</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
-        .summary { background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .back-link { display: inline-block; margin: 20px 0; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
-        .back-link:hover { background: #0056b3; }
-        pre { white-space: pre-wrap; word-wrap: break-word; }
-    </style>
-</head>
-<body>
-    <h1>📊 Strategic Summary & Recommendations</h1>
-    <div class="summary">
-        <pre>{{ summary_text }}</pre>
-    </div>
-    <a href="/" class="back-link">← Back to Analyzer</a>
-</body>
-</html>
-        """, summary_text=summary_text)
+        return f"<pre>{summary_text}</pre><br><a href='/'>Back</a>"
     except Exception as e:
         flushprint(f"Error generating summary: {e}")
         return f"Error generating summary: {str(e)}", 500
@@ -442,6 +359,7 @@ def analyze_landing_pages(entries, prompt):
     """Analyze landing pages using Gemini API with screenshots (manual or auto)"""
     flushprint("Starting landing page analysis...")
     results = []
+    
     header = [
         "Platform", "LP Link", "Main Offer", "Purchase or Lead Gen Form", "Primary CTA",
         "Above the Fold - Headline", "Above the Fold - Trust Elements", "Above the Fold - Other Elements",
@@ -449,10 +367,11 @@ def analyze_landing_pages(entries, prompt):
         "Above the Fold - # of CTAs", "Above the Fold - CTA / Form Position", "Primary CTA Just for Free Trial",
         "Secondary CTA", "Clickable Logo", "Navigation Bar"
     ]
-    rows = []
     
+    rows = []
     for entry in entries:
         flushprint(f"Processing {entry['key']} ({entry['url']}) manual={entry['manual']}")
+        
         manual_path = os.path.join(UPLOAD_FOLDER, f"{entry['key']}_manual.png")
         auto_path = os.path.join(UPLOAD_FOLDER, f"{entry['key']}_auto.png")
         screenshot_path = None
@@ -462,7 +381,6 @@ def analyze_landing_pages(entries, prompt):
         elif os.path.exists(auto_path):
             screenshot_path = auto_path
         elif not entry['manual']:
-            # Try to take automatic screenshot and save to auto_path
             auto_screenshot_path = take_screenshot(entry['url'], auto_path)
             if auto_screenshot_path and os.path.exists(auto_screenshot_path):
                 screenshot_path = auto_screenshot_path
@@ -482,6 +400,7 @@ def analyze_landing_pages(entries, prompt):
             flushprint(f"No screenshot available for {entry['url']}, using fallback")
             json_result = create_fallback_result(entry['url'], entry['key'])
         
+        # Ensure all fields are present
         for field in header:
             if field not in json_result:
                 json_result[field] = "N/A"
@@ -489,6 +408,7 @@ def analyze_landing_pages(entries, prompt):
         results.append(json_result)
         rows.append([json_result.get(h, "N/A") for h in header])
     
+    # Save to CSV
     try:
         with open(CSV_FILE, "w", newline='', encoding="utf-8") as f:
             writer = csv.writer(f)
