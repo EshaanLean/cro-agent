@@ -5,7 +5,6 @@ import sys
 import pandas as pd
 from flask import Flask, request, render_template_string, send_file, jsonify
 import zipfile
-import tldextract
 from datetime import datetime
 
 # --- Flushed print utility ---
@@ -204,20 +203,17 @@ def save_manual_screenshots(files):
             uploaded_names.append(file.filename)
     return uploaded_names
 
-
 def extract_site_name(url):
-    """Extracts the main domain (e.g., 'udemy' from 'www.udemy.com', 'example' from 'example.co.uk')."""
+    """Extract a clean site name from URL"""
     try:
-        ext = tldextract.extract(url)
-        # ext.domain is the main part of the domain
-        clean_name = ext.domain.lower().replace("-", "_").replace(".", "_")
-        flushprint(f"Extracted site name '{clean_name}' from URL '{url}'")
-        return clean_name
-    except Exception as e:
-        flushprint(f"extract_site_name error for URL '{url}': {e}")
+        domain_part = url.split("//")[-1].split("/")[0]
+        if "." in domain_part:
+            base_name = domain_part.split(".")[0]
+        else:
+            base_name = domain_part
+        return base_name.lower().replace("-", "_").replace(".", "_")
+    except:
         return "unknown"
-
-
 
 # -- Gemini Analysis Function --
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
@@ -243,7 +239,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
 
         default_analysis_prompt = f"""
         As a digital marketing and CRO expert, analyze this landing page screenshot and text content for '{provider_name}'.
-
+        
         **Webpage Information:**
         - **Provider:** {provider_name}
         - **URL:** {url}
@@ -275,27 +271,14 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
         """
 
         prompt = prompt_override or default_analysis_prompt
-
-        # Build proper content for Gemini API
-        response = model.generate_content(
-            contents = [
-                {"role": "user", "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/png",
-                            "data": image_bytes
-                        }
-                    }
-                ]}
-            ]
-        )
-
-        if not hasattr(response, 'text') or not response.text or not response.text.strip():
-            raise Exception("Gemini API returned empty or invalid response")
-
+        
+        response = model.generate_content([prompt, image])
+        
+        if not response.text:
+            raise Exception("Empty response from Gemini API")
+            
         cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
-
+        
         try:
             result = json.loads(cleaned_json)
             result["Platform"] = provider_name
@@ -310,7 +293,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
                 "error": f"JSON parse error: {str(e)}",
                 "raw_response": cleaned_json[:500]
             }
-
+            
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
         return {
@@ -318,8 +301,6 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
             "URL": url,
             "error": f"Gemini API error: {str(e)}"
         }
-
-
 
 # -- Generate Summary Report --
 def generate_summary_report(course_data_df: pd.DataFrame, client_name: str) -> str:
