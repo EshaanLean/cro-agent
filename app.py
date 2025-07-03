@@ -98,7 +98,7 @@ def save_manual_screenshots(files):
             uploaded_names.append(file.filename)
     return uploaded_names
 
-# -- Gemini Analysis Function (from your code) --
+# -- Gemini Analysis Function (FIXED) --
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
@@ -123,20 +123,69 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
         ---
         """ if page_content else ""
 
+        # FIXED: Complete prompt instead of placeholder
         prompt = prompt_override or f"""
-        (your same prompt...)
+        Analyze this landing page screenshot and provide a structured analysis in JSON format.
+        Focus on the above-the-fold content and provide the following information:
+
+        {prompt_text_section}
+
+        Please analyze the landing page and return a JSON object with the following structure:
+        {{
+            "Platform": "{provider_name}",
+            "URL": "{url}",
+            "Value_Proposition": "Main value proposition or headline",
+            "CTA_Primary": "Primary call-to-action text and placement",
+            "Trust_Elements": "Trust signals, testimonials, social proof",
+            "Visual_Design": "Description of visual design and layout",
+            "Target_Audience": "Apparent target audience",
+            "Unique_Selling_Points": "Key differentiators mentioned",
+            "Pricing_Mentioned": "Any pricing information visible",
+            "Course_Type": "Type of course or program offered",
+            "Key_Features": "Main features or benefits highlighted"
+        }}
+
+        Return only valid JSON, no additional text or markdown formatting.
         """
 
         flushprint("Sending prompt to Gemini")
         response = model.generate_content([prompt, image_for_api])
+        
+        if not response.text:
+            raise Exception("Empty response from Gemini API")
+            
         cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
-        flushprint("Gemini responded. JSON parsed.")
-        return json.loads(cleaned_json)
+        flushprint("Gemini responded. Attempting JSON parse...")
+        
+        # FIXED: Better error handling and ensure Platform is set
+        try:
+            result = json.loads(cleaned_json)
+            # Ensure Platform is always set correctly
+            result["Platform"] = provider_name
+            result["URL"] = url
+            flushprint("JSON parsed successfully")
+            return result
+        except json.JSONDecodeError as e:
+            flushprint(f"JSON parse error: {e}")
+            flushprint(f"Raw response: {cleaned_json[:500]}")
+            # Return structured error data instead of raising
+            return {
+                "Platform": provider_name,
+                "URL": url,
+                "error": f"JSON parse error: {str(e)}",
+                "raw_response": cleaned_json[:500]
+            }
+            
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
-        raise
+        # Return structured error data instead of raising
+        return {
+            "Platform": provider_name,
+            "URL": url,
+            "error": f"Gemini API error: {str(e)}"
+        }
 
-# -- Main analyzer function (mixes manual+auto) --
+# -- Main analyzer function (FIXED) --
 def analyze_landing_pages(landing_pages, prompt_override=None):
     flushprint("analyze_landing_pages called")
     all_course_data = []
@@ -155,53 +204,104 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
 
             for lp in landing_pages:
                 flushprint(f"Processing {lp['name']} ({lp['url']}) manual={lp.get('manual')}")
+                
                 if lp.get("manual", False):
+                    # MANUAL SCREENSHOT PROCESSING
                     manual_file = f"{lp['name']}_manual.png"
                     manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
                     if not os.path.exists(manual_path):
                         flushprint(f"Manual screenshot not found: {manual_file}")
-                        all_course_data.append({"Platform": lp['name'], "error": f"Manual screenshot '{manual_file}' not found."})
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "error": f"Manual screenshot '{manual_file}' not found."
+                        })
                         continue
-                    with open(manual_path, "rb") as f:
-                        image_bytes = f.read()
-                    page_content = ""
+                    
                     try:
-                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
+                        with open(manual_path, "rb") as f:
+                            image_bytes = f.read()
+                        page_content = ""
+                        structured_data = get_multimodal_analysis_from_gemini(
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override
+                        )
                         all_course_data.append(structured_data)
-                        flushprint(f"Gemini result added for {lp['name']}")
+                        flushprint(f"Manual analysis completed for {lp['name']}")
                     except Exception as e:
-                        flushprint(f"Error for manual {lp['name']}:", e)
-                        all_course_data.append({"Platform": lp['name'], "error": str(e)})
+                        flushprint(f"Error processing manual screenshot for {lp['name']}: {e}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "error": f"Manual processing error: {str(e)}"
+                        })
                 else:
+                    # AUTOMATIC SCREENSHOT PROCESSING
                     page = context.new_page()
                     try:
                         flushprint(f"Navigating to {lp['url']}")
                         page.goto(lp["url"], wait_until="domcontentloaded", timeout=60000)
                         page.wait_for_timeout(5000)
+                        
                         screenshot_path = os.path.join(output_dir, f"{lp['name']}_fullpage.png")
                         page.screenshot(path=screenshot_path, full_page=True)
+                        
                         with open(screenshot_path, "rb") as f:
                             image_bytes = f.read()
+                        
                         page_content = page.inner_text('body')
-                        structured_data = get_multimodal_analysis_from_gemini(page_content, image_bytes, lp['name'], lp['url'], prompt_override)
+                        structured_data = get_multimodal_analysis_from_gemini(
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override
+                        )
                         all_course_data.append(structured_data)
-                        flushprint(f"Playwright + Gemini result added for {lp['name']}")
+                        flushprint(f"Automatic analysis completed for {lp['name']}")
+                    except PlaywrightTimeoutError:
+                        flushprint(f"Timeout error for {lp['name']}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "error": "Page load timeout"
+                        })
                     except Exception as e:
-                        flushprint(f"Error for auto {lp['name']}:", e)
-                        all_course_data.append({"Platform": lp['name'], "error": str(e)})
+                        flushprint(f"Error for auto processing {lp['name']}: {e}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "error": f"Auto processing error: {str(e)}"
+                        })
                     finally:
                         page.close()
+                        
             browser.close()
             flushprint("Browser closed")
+            
     except Exception as e:
         flushprint("Fatal error in analyze_landing_pages:", e)
-        raise
+        # Don't raise - return what we have
+        all_course_data.append({
+            "Platform": "SYSTEM_ERROR",
+            "URL": "N/A", 
+            "error": f"Fatal error: {str(e)}"
+        })
 
+    # FIXED: Ensure we always have data to save
+    if not all_course_data:
+        all_course_data.append({
+            "Platform": "NO_DATA",
+            "URL": "N/A",
+            "error": "No data was collected"
+        })
+
+    # Save CSV
     df = pd.DataFrame(all_course_data)
-    df.to_csv(os.path.join(output_dir, "competitive_analysis_data.csv"), index=False)
-    flushprint("CSV saved")
-    summary = df.to_string(index=False)
-    return summary, os.path.join(output_dir, "competitive_analysis_data.csv")
+    csv_path = os.path.join(output_dir, "competitive_analysis_data.csv")
+    df.to_csv(csv_path, index=False)
+    flushprint(f"CSV saved with {len(all_course_data)} records")
+    
+    # Create summary
+    summary = f"Analysis completed for {len(all_course_data)} landing pages:\n\n"
+    summary += df.to_string(index=False)
+    
+    return summary, csv_path
 
 # --- Main routes ---
 @app.route("/", methods=["GET", "POST"])
@@ -212,7 +312,7 @@ def index():
     csv_path = None
     urls = ''
     prompt = ''
-    default_prompt = "Describe the value prop, CTA, and trust elements above the fold..."
+    default_prompt = "Analyze this landing page and provide detailed insights about value proposition, call-to-action, trust elements, and overall design strategy."
 
     if request.method == "POST":
         flushprint("POST data:", request.form)
@@ -220,28 +320,53 @@ def index():
         prompt = request.form.get("prompt")
         uploaded_files = request.files
 
-        save_manual_screenshots(uploaded_files)
-        flushprint("Manual screenshots saved (if any)")
+        # Save manual screenshots
+        uploaded_names = save_manual_screenshots(uploaded_files)
+        flushprint(f"Manual screenshots saved: {uploaded_names}")
 
+        # Parse URLs
         url_list = [u.strip() for u in (urls or "").splitlines() if u.strip()]
         flushprint("Parsed URLs:", url_list)
-        landing_pages = []
-        for url in url_list:
-            base_name = url.split("//")[-1].split("/")[1] if "/" in url.split("//")[-1] else url.split("//")[-1]
-            name = base_name.lower().replace(".", "_").replace("-", "_")
-            manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{name}_manual.png")
-            landing_pages.append({
-                "name": name,
-                "url": url,
-                "manual": os.path.exists(manual_path)
-            })
-        flushprint("Landing pages dict:", landing_pages)
-        try:
-            summary, csv_path = analyze_landing_pages(landing_pages, prompt)
-            flushprint("Analysis summary done.")
-        except Exception as e:
-            error = str(e)
-            flushprint("Error in POST analyze_landing_pages:", e)
+        
+        if not url_list:
+            error = "Please provide at least one URL"
+        else:
+            landing_pages = []
+            for url in url_list:
+                # Extract name from URL
+                try:
+                    domain_part = url.split("//")[-1].split("/")[0]
+                    if "." in domain_part:
+                        base_name = domain_part.split(".")[0]
+                    else:
+                        base_name = domain_part
+                    name = base_name.lower().replace("-", "_").replace(".", "_")
+                    
+                    # Check if manual screenshot exists
+                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{name}_manual.png")
+                    is_manual = os.path.exists(manual_path)
+                    
+                    landing_pages.append({
+                        "name": name,
+                        "url": url,
+                        "manual": is_manual
+                    })
+                except Exception as e:
+                    flushprint(f"Error parsing URL {url}: {e}")
+                    landing_pages.append({
+                        "name": "unknown",
+                        "url": url,
+                        "manual": False
+                    })
+            
+            flushprint("Landing pages prepared:", landing_pages)
+            
+            try:
+                summary, csv_path = analyze_landing_pages(landing_pages, prompt)
+                flushprint("Analysis completed successfully")
+            except Exception as e:
+                error = f"Analysis failed: {str(e)}"
+                flushprint("Error in analysis:", e)
 
     return render_template_string(HTML, summary=summary, error=error, urls=urls, prompt=prompt, default_prompt=default_prompt)
 
@@ -251,7 +376,7 @@ def download_csv():
     path = "landing_page_analysis/competitive_analysis_data.csv"
     if not os.path.exists(path):
         flushprint("CSV not found")
-        return "No file available", 404
+        return "No CSV file available. Please run an analysis first.", 404
     flushprint("CSV found, sending")
     return send_file(path, as_attachment=True, download_name="competitive_analysis_data.csv")
 
@@ -263,4 +388,4 @@ def ping():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     flushprint(f"Starting Flask app on port {port}")
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)
