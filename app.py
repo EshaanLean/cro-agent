@@ -1,30 +1,22 @@
 import os
 import io
-import json
 import sys
+import re
+import json
+from datetime import datetime
 import pandas as pd
 from flask import Flask, request, render_template_string, send_file, jsonify
 import zipfile
-from datetime import datetime
+from PIL import Image, ImageOps
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import google.generativeai as genai
 
-# --- Flushed print utility ---
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
     sys.stdout.flush()
 
-# ------------- LOG APP STARTUP -------------
 flushprint("=== Dynamic Landing Page Analyzer starting up ===")
 
-try:
-    import google.generativeai as genai
-    from PIL import Image
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-    flushprint("Imports successful")
-except Exception as e:
-    flushprint("Import error:", e)
-    raise
-
-# -- API KEY SETUP --
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
     flushprint("ERROR: GEMINI_API_KEY env var not set!")
@@ -32,18 +24,31 @@ if not API_KEY:
 else:
     flushprint("GEMINI_API_KEY loaded")
 
-try:
-    genai.configure(api_key=API_KEY)
-    flushprint("Gemini configured")
-except Exception as e:
-    flushprint("Gemini configure failed:", e)
-    raise
+genai.configure(api_key=API_KEY)
+flushprint("Gemini configured")
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = "manual_screenshots"
 app.config['OUTPUT_FOLDER'] = "analysis_results"
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
+
+MAX_DIM = 2048
+
+def _prepare_image(pil_img: Image.Image) -> Image.Image:
+    if max(pil_img.size) > MAX_DIM:
+        pil_img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
+    if pil_img.mode in ("RGBA", "P"):
+        pil_img = ImageOps.exif_transpose(pil_img.convert("RGB"))
+    return pil_img
+
+_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+
+def _extract_json(text: str) -> dict:
+    match = _JSON_RE.search(text)
+    if not match:
+        raise ValueError("No JSON object found in model response.")
+    return json.loads(match.group(0))
 
 # ------------- HTML TEMPLATE --------------------
 HTML = """
@@ -190,7 +195,6 @@ function showLoading() {
 </html>
 """
 
-# -- Utility functions --
 def save_manual_screenshots(files):
     uploaded_names = []
     flushprint("save_manual_screenshots called")
@@ -204,15 +208,10 @@ def save_manual_screenshots(files):
     return uploaded_names
 
 def extract_site_name(url):
-    """Extract the main domain part for use as a site name (e.g., 'udemy' from 'www.udemy.com')"""
     try:
         domain_part = url.split("//")[-1].split("/")[0]
         parts = domain_part.split(".")
-        if len(parts) >= 2:
-            # Get second-to-last part (e.g. 'udemy' from 'www.udemy.com')
-            base_name = parts[-2]
-        else:
-            base_name = parts[0]
+        base_name = parts[-2] if len(parts) >= 2 else parts[0]
         clean_name = base_name.lower().replace("-", "_").replace(".", "_")
         flushprint(f"Extracted site name '{clean_name}' from URL '{url}'")
         return clean_name
@@ -220,39 +219,29 @@ def extract_site_name(url):
         flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
 
-
-# -- Gemini Analysis Function --
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
         model = genai.GenerativeModel('gemini-2.5-pro')
-        image = Image.open(io.BytesIO(image_bytes))
-
-        MAX_PIXELS = 16383
-        if image.height > MAX_PIXELS:
-            aspect_ratio = image.width / image.height
-            new_height = MAX_PIXELS - 1
-            new_width = int(new_height * aspect_ratio)
-            image = image.resize((new_width, new_height), Image.LANCZOS)
-            flushprint("Image resized for Gemini API")
+        pil_img = _prepare_image(Image.open(io.BytesIO(image_bytes)))
 
         prompt_text_section = f"""
-        - **Text Content (first 15,000 characters):**
-        ---
-        {page_content[:15000]}
-        ---
-        """ if page_content else ""
+- **Text Content (first 15,000 characters):**
+---
+{page_content[:15000]}
+---""" if page_content else ""
 
-        default_analysis_prompt = f"""
-        As a digital marketing and CRO expert, analyze this landing page screenshot and text content for '{provider_name}'.
-        
-        **Webpage Information:**
-        - **Provider:** {provider_name}
-        - **URL:** {url}
-        {prompt_text_section}
+        default_prompt = f"""
+As a digital marketing and CRO expert, analyze this landing page screenshot and text content for '{provider_name}'.
 
-        Please provide a detailed analysis in JSON format with the following structure:
-        {{
+**Webpage Information**
+- **Provider:** {provider_name}
+- **URL:** {url}
+{prompt_text_section}
+
+Return your answer **only** as valid JSON matching this schema (no markdown, no code fences):
+
+{{
           "Platform": "{provider_name}",
           "URL": "{url}",
           "Main_Offer": "Describe the main value proposition or product offering",
@@ -271,35 +260,30 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
           "Form_Placement": "Position and type of forms visible",
           "Navigation_Style": "Description of navigation menu and structure",
           "Overall_Strategy": "Assessment of overall conversion strategy and approach"
-        }}
+}}"""
 
-        Return only valid JSON, no additional text or markdown formatting.
-        """
+        prompt = prompt_override or default_prompt
 
-        prompt = prompt_override or default_analysis_prompt
-        
-        response = model.generate_content([prompt, image])
-        
-        if not response.text:
-            raise Exception("Empty response from Gemini API")
-            
-        cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
-        
+        response = model.generate_content([prompt, pil_img])
+
+        if not response.text or not response.text.strip():
+            flushprint("Empty response – retrying without image")
+            response = model.generate_content(prompt)
+
         try:
-            result = json.loads(cleaned_json)
-            result["Platform"] = provider_name
-            result["URL"] = url
+            result_dict = _extract_json(response.text)
+            result_dict.update({"Platform": provider_name, "URL": url})
             flushprint("JSON parsed successfully")
-            return result
-        except json.JSONDecodeError as e:
+            return result_dict
+        except Exception as e:
             flushprint(f"JSON parse error: {e}")
             return {
                 "Platform": provider_name,
                 "URL": url,
                 "error": f"JSON parse error: {str(e)}",
-                "raw_response": cleaned_json[:500]
+                "raw_response": response.text[:500]
             }
-            
+
     except Exception as e:
         flushprint("Gemini multimodal analysis failed:", e)
         return {
@@ -308,7 +292,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
             "error": f"Gemini API error: {str(e)}"
         }
 
-# -- Generate Summary Report --
+
 def generate_summary_report(course_data_df: pd.DataFrame, client_name: str) -> str:
     flushprint(f"Generating summary report with client: {client_name}")
     try:
