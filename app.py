@@ -276,11 +276,20 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
 
         prompt = prompt_override or default_analysis_prompt
 
-        # Build valid multimodal content
-        response = model.generate_content([
-            {"text": prompt},
-            {"image": image}
-        ])
+        # Build proper content for Gemini API
+        response = model.generate_content(
+            contents = [
+                {"role": "user", "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": image_bytes
+                        }
+                    }
+                ]}
+            ]
+        )
 
         if not hasattr(response, 'text') or not response.text or not response.text.strip():
             raise Exception("Gemini API returned empty or invalid response")
@@ -309,6 +318,7 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
             "URL": url,
             "error": f"Gemini API error: {str(e)}"
         }
+
 
 
 # -- Generate Summary Report --
