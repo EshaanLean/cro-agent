@@ -19,11 +19,51 @@ def get_db_conn():
         raise Exception("DATABASE_URL not set!")
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
+def init_database():
+    """Initialize database tables if they don't exist"""
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # Create screenshots table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS screenshots (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        url TEXT,
+                        image BYTEA,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create analysis_results table for CSV and reports
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS analysis_results (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) NOT NULL,
+                        file_type VARCHAR(50) NOT NULL,
+                        file_name VARCHAR(255) NOT NULL,
+                        content TEXT,
+                        file_data BYTEA,
+                        client_name VARCHAR(255),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                print("Database tables initialized successfully")
+    except Exception as e:
+        print(f"Error initializing database: {e}")
+    finally:
+        conn.close()
+
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
     sys.stdout.flush()
 
 flushprint("=== Dynamic Landing Page Analyzer starting up ===")
+
+# Initialize database on startup
+init_database()
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
@@ -99,6 +139,7 @@ def _extract_json(text: str) -> dict:
     raise ValueError(f"No valid JSON found in model response. Response snippet: {snippet}")
 
 def save_screenshot_to_db(name, url, image_bytes):
+    """Save screenshot to database"""
     conn = get_db_conn()
     try:
         with conn:
@@ -111,19 +152,61 @@ def save_screenshot_to_db(name, url, image_bytes):
     finally:
         conn.close()
 
-
-def get_screenshot_from_db(name, url):
+def save_analysis_result_to_db(session_id, file_type, file_name, content=None, file_data=None, client_name=None):
+    """Save analysis results (CSV, reports) to database"""
     conn = get_db_conn()
     try:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT image FROM screenshots WHERE name=%s AND url=%s ORDER BY created_at DESC LIMIT 1",
-                    (name, url)
+                    """INSERT INTO analysis_results 
+                       (session_id, file_type, file_name, content, file_data, client_name) 
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (session_id, file_type, file_name, content, 
+                     psycopg2.Binary(file_data) if file_data else None, client_name)
                 )
+        print(f"Saved {file_type} to database: {file_name}")
+    except Exception as e:
+        print(f"Error saving {file_type} to database: {e}")
+    finally:
+        conn.close()
+
+def get_screenshot_from_db(name, url=None):
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                if url:
+                    cur.execute(
+                        "SELECT image FROM screenshots WHERE name=%s AND url=%s ORDER BY created_at DESC LIMIT 1",
+                        (name, url)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT image FROM screenshots WHERE name=%s ORDER BY created_at DESC LIMIT 1",
+                        (name,)
+                    )
                 row = cur.fetchone()
                 if row:
                     return row["image"]
+                else:
+                    return None
+    finally:
+        conn.close()
+
+def get_analysis_result_from_db(session_id, file_type):
+    """Retrieve analysis results from database"""
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT file_name, content, file_data FROM analysis_results WHERE session_id=%s AND file_type=%s ORDER BY created_at DESC LIMIT 1",
+                    (session_id, file_type)
+                )
+                row = cur.fetchone()
+                if row:
+                    return row
                 else:
                     return None
     finally:
@@ -149,6 +232,22 @@ def list_screenshots():
     finally:
         conn.close()
 
+@app.route('/analysis_results')
+def list_analysis_results():
+    """List recent analysis results"""
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT session_id, file_type, file_name, client_name, created_at 
+                    FROM analysis_results 
+                    ORDER BY created_at DESC LIMIT 50
+                """)
+                rows = cur.fetchall()
+        return jsonify(rows)
+    finally:
+        conn.close()
 
 # ------------- HTML TEMPLATE --------------------
 HTML = """
@@ -183,11 +282,22 @@ HTML = """
     .loading { text-align: center; margin: 20px 0; }
     .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .debug-section { margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 5px; }
+    .debug-btn { background: #2196f3; color: white; text-decoration: none; padding: 8px 15px; border-radius: 3px; margin-right: 10px; display: inline-block; font-size: 12px; }
   </style>
 </head>
 <body>
 <div class="container">
   <h1>🚀 Dynamic Landing Page Analyzer</h1>
+  
+  <!-- Debug Section -->
+  <div class="debug-section">
+    <h4>🔍 Debug & Database Status</h4>
+    <a href="/screenshots" class="debug-btn" target="_blank">View Screenshots DB</a>
+    <a href="/analysis_results" class="debug-btn" target="_blank">View Analysis Results DB</a>
+    <p><small>Check these links to see what's stored in your database</small></p>
+  </div>
+
   <form method="POST" enctype="multipart/form-data" id="analysisForm">
     <div class="section">
       <h3>1. Configure URLs</h3>
@@ -492,6 +602,7 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
     flushprint("analyze_landing_pages called")
     all_course_data = []
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_id = f"session_{timestamp}"
     session_dir = os.path.join(app.config['OUTPUT_FOLDER'], f"analysis_{timestamp}")
     os.makedirs(session_dir, exist_ok=True)
     
@@ -535,6 +646,10 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                     try:
                         with open(manual_path, "rb") as f:
                             image_bytes = f.read()
+                        
+                        # Save screenshot to database
+                        save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
+                        
                         page_content = ""
                         structured_data = get_multimodal_analysis_from_gemini(
                             page_content, image_bytes, lp['name'], lp['url'], prompt_override
@@ -563,6 +678,9 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                         
                         with open(screenshot_path, "rb") as f:
                             image_bytes = f.read()
+                        
+                        # Save screenshot to database
+                        save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
                         
                         page_content = page.inner_text('body')
                         structured_data = get_multimodal_analysis_from_gemini(
@@ -611,11 +729,17 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
             "error": "No data was collected"
         })
 
-    # Save CSV
+    # Save CSV (local and database)
     df = pd.DataFrame(all_course_data)
     csv_path = os.path.join(session_dir, "competitive_analysis_data.csv")
     df.to_csv(csv_path, index=False)
-    flushprint(f"CSV saved with {len(all_course_data)} records")
+    flushprint(f"CSV saved locally with {len(all_course_data)} records")
+    
+    # Save CSV to database
+    with open(csv_path, 'rb') as f:
+        csv_bytes = f.read()
+    save_analysis_result_to_db(session_id, 'csv', 'competitive_analysis_data.csv', 
+                               content=df.to_csv(index=False), file_data=csv_bytes, client_name=client_name)
     
     # Generate summary report
     successful_df = df[df['error'].isnull()].copy() if 'error' in df.columns else df
@@ -625,11 +749,18 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
         report_path = os.path.join(session_dir, "summary_and_recommendations.md")
         with open(report_path, "w", encoding='utf-8') as f:
             f.write(summary_report)
-        flushprint(f"Summary report saved to {report_path}")
+        flushprint(f"Summary report saved locally to {report_path}")
+        
+        # Save report to database
+        with open(report_path, 'rb') as f:
+            report_bytes = f.read()
+        save_analysis_result_to_db(session_id, 'report', 'summary_and_recommendations.md', 
+                                   content=summary_report, file_data=report_bytes, client_name=client_name)
     else:
         summary_report = "No successful data collection for report generation."
     
-    # Store paths for downloads
+    # Store session info for downloads
+    app.config['LAST_SESSION_ID'] = session_id
     app.config['LAST_CSV_PATH'] = csv_path
     app.config['LAST_REPORT_PATH'] = report_path if 'report_path' in locals() else None
     app.config['LAST_SESSION_DIR'] = session_dir
@@ -704,7 +835,7 @@ def index():
             
             # Run analysis
             summary, csv_path = analyze_landing_pages(landing_pages, prompt if prompt.strip() else None)
-            success = f"Analysis completed successfully! Processed {len(landing_pages)} landing pages."
+            success = f"Analysis completed successfully! Processed {len(landing_pages)} landing pages. Data saved to database."
             
         except Exception as e:
             error = f"Analysis failed: {str(e)}"
@@ -715,6 +846,20 @@ def index():
 @app.route('/download/csv')
 def download_csv():
     flushprint("Download CSV requested")
+    
+    # Try to get from database first
+    session_id = app.config.get('LAST_SESSION_ID')
+    if session_id:
+        result = get_analysis_result_from_db(session_id, 'csv')
+        if result:
+            return send_file(
+                io.BytesIO(result['file_data']), 
+                as_attachment=True, 
+                download_name=result['file_name'],
+                mimetype='text/csv'
+            )
+    
+    # Fallback to local file
     path = app.config.get('LAST_CSV_PATH')
     if not path or not os.path.exists(path):
         return "No CSV file available. Please run an analysis first.", 404
@@ -723,6 +868,20 @@ def download_csv():
 @app.route('/download/report')
 def download_report():
     flushprint("Download report requested")
+    
+    # Try to get from database first
+    session_id = app.config.get('LAST_SESSION_ID')
+    if session_id:
+        result = get_analysis_result_from_db(session_id, 'report')
+        if result:
+            return send_file(
+                io.BytesIO(result['file_data']), 
+                as_attachment=True, 
+                download_name=result['file_name'],
+                mimetype='text/markdown'
+            )
+    
+    # Fallback to local file
     path = app.config.get('LAST_REPORT_PATH')
     if not path or not os.path.exists(path):
         return "No report file available. Please run an analysis first.", 404
