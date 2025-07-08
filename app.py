@@ -948,12 +948,24 @@ def test_db():
         
         # Mask sensitive parts of URL for logging
         masked_url = db_url
-        if "@" in db_url:
-            parts = db_url.split("@")
+        if "@" in db_url and "://" in db_url:
+            parts = db_url.split("://")
             if len(parts) > 1:
-                masked_url = f"{parts[0].split('://')[0]}://***:***@{parts[1]}"
+                protocol = parts[0]
+                rest = parts[1]
+                if "@" in rest:
+                    auth_and_host = rest.split("@")
+                    if len(auth_and_host) > 1:
+                        masked_url = f"{protocol}://***:***@{auth_and_host[1]}"
         
         print(f"Testing connection with URL: {masked_url}")
+        
+        # Check if URL contains internal vs external format
+        url_type = "unknown"
+        if "render.com" in db_url:
+            url_type = "external"
+        elif "dpg-" in db_url and "render.com" not in db_url:
+            url_type = "internal"
         
         conn = get_db_conn()
         with conn:
@@ -967,15 +979,27 @@ def test_db():
         return {
             "status": "success",
             "message": "Database connected successfully!",
+            "url_type": url_type,
             "database": db_name['current_database'] if db_name else "unknown",
             "version": result['version'][:50] + "..." if result else "unknown"
         }
     except Exception as e:
         error_msg = str(e)
         print(f"Database connection test failed: {error_msg}")
+        
+        # Provide specific guidance based on error type
+        guidance = ""
+        if "Name or service not known" in error_msg:
+            guidance = "DNS resolution failed. Check if database and web service are in same region, or use External Database URL."
+        elif "SSL" in error_msg:
+            guidance = "SSL connection issue. Try adding ?sslmode=prefer to DATABASE_URL."
+        elif "authentication failed" in error_msg:
+            guidance = "Wrong username/password. Check DATABASE_URL credentials."
+        
         return {
             "status": "error", 
             "message": f"Database connection failed: {error_msg}",
+            "guidance": guidance,
             "url_format": "Using: " + (masked_url if 'masked_url' in locals() else "URL not available")
         }, 500
 
