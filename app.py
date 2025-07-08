@@ -3,6 +3,7 @@ import io
 import sys
 import re
 import json
+import urllib.parse
 from datetime import datetime
 import pandas as pd
 from flask import Flask, request, render_template_string, send_file, jsonify
@@ -13,31 +14,18 @@ import google.generativeai as genai
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-def flushprint(*args, **kwargs):
-    print(*args, **kwargs)
-    sys.stdout.flush()
-
 def get_db_conn():
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         raise Exception("DATABASE_URL not set!")
-    # Ensure no trailing newline/quotes and append sslmode correctly
-    db_url = db_url.strip().replace('"', '').replace("'", "")
+    
+    # For Render PostgreSQL, ensure SSL mode is set
     if "render.com" in db_url or "dpg-" in db_url:
         if "sslmode=" not in db_url:
             separator = "&" if "?" in db_url else "?"
-            db_url = f"{db_url}{separator}sslmode=require"
+            db_url = f"{db_url}{separator}sslmode=prefer"
+    
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
-
-def test_db_connection():
-    try:
-        conn = get_db_conn()
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-            print("Database connection OK")
-        conn.close()
-    except Exception as e:
-        print("Database connection failed:", e)
 
 def init_database():
     """Initialize database tables if they don't exist"""
@@ -56,6 +44,7 @@ def init_database():
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
+                    
                     # Create analysis_results table for CSV and reports
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS analysis_results (
@@ -69,18 +58,23 @@ def init_database():
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
+                    
                     print("Database tables initialized successfully")
         finally:
             conn.close()
     except Exception as e:
         print(f"Error initializing database: {e}")
         print("App will continue running, but database features may not work")
+        # Don't raise the exception - let the app start anyway
+
+def flushprint(*args, **kwargs):
+    print(*args, **kwargs)
+    sys.stdout.flush()
 
 flushprint("=== Dynamic Landing Page Analyzer starting up ===")
 
 # Initialize database on startup
 init_database()
-test_db_connection()
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
@@ -330,9 +324,11 @@ HTML = """
   <!-- Debug Section -->
   <div class="debug-section">
     <h4>🔍 Debug & Database Status</h4>
+    <a href="/test-db" class="debug-btn" target="_blank">Test DB Connection</a>
+    <a href="/check-env" class="debug-btn" target="_blank">Check Environment</a>
     <a href="/screenshots" class="debug-btn" target="_blank">View Screenshots DB</a>
     <a href="/analysis_results" class="debug-btn" target="_blank">View Analysis Results DB</a>
-    <p><small>Check these links to see what's stored in your database</small></p>
+    <p><small>Check these links to diagnose connection issues and see stored data</small></p>
   </div>
 
   <form method="POST" enctype="multipart/form-data" id="analysisForm">
@@ -947,6 +943,38 @@ def download_all():
 def ping():
     return "pong"
 
+@app.route('/check-env')
+def check_env():
+    """Check environment variables for debugging"""
+    db_url = os.environ.get("DATABASE_URL", "Not set")
+    gemini_key = os.environ.get("GEMINI_API_KEY", "Not set")
+    
+    # Mask sensitive data
+    masked_db_url = "Not set"
+    if db_url != "Not set":
+        if "@" in db_url and "://" in db_url:
+            parts = db_url.split("://")
+            if len(parts) > 1:
+                protocol = parts[0]
+                rest = parts[1]
+                if "@" in rest:
+                    auth_and_host = rest.split("@")
+                    if len(auth_and_host) > 1:
+                        masked_db_url = f"{protocol}://***:***@{auth_and_host[1]}"
+                else:
+                    masked_db_url = db_url
+        else:
+            masked_db_url = db_url[:20] + "..." if len(db_url) > 20 else db_url
+    
+    masked_gemini = "Set" if gemini_key != "Not set" else "Not set"
+    
+    return {
+        "DATABASE_URL": masked_db_url,
+        "GEMINI_API_KEY": masked_gemini,
+        "url_type": "external" if "render.com" in db_url else ("internal" if "dpg-" in db_url else "unknown"),
+        "ssl_in_url": "sslmode=" in db_url if db_url != "Not set" else False
+    }
+
 @app.route('/test-db')
 def test_db():
     """Test database connection for debugging"""
@@ -974,21 +1002,38 @@ def test_db():
         elif "dpg-" in db_url and "render.com" not in db_url:
             url_type = "internal"
         
+        # Test connection details
+        connection_method = "unknown"
+        ssl_mode = "unknown"
+        
+        # Parse URL to check SSL mode
+        if "sslmode=" in db_url:
+            ssl_mode = db_url.split("sslmode=")[1].split("&")[0]
+        
         conn = get_db_conn()
+        
+        # Check connection info
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT version();")
                 result = cur.fetchone()
                 cur.execute("SELECT current_database();")
                 db_name = cur.fetchone()
+                
+                # Get connection info
+                cur.execute("SHOW ssl;")
+                ssl_status = cur.fetchone()
+                
         conn.close()
         
         return {
             "status": "success",
             "message": "Database connected successfully!",
             "url_type": url_type,
+            "ssl_enabled": ssl_status['ssl'] if ssl_status else "unknown",
             "database": db_name['current_database'] if db_name else "unknown",
-            "version": result['version'][:50] + "..." if result else "unknown"
+            "version": result['version'][:100] + "..." if result else "unknown",
+            "masked_url": masked_url
         }
     except Exception as e:
         error_msg = str(e)
@@ -998,10 +1043,14 @@ def test_db():
         guidance = ""
         if "Name or service not known" in error_msg:
             guidance = "DNS resolution failed. Check if database and web service are in same region, or use External Database URL."
+        elif "SSL connection has been closed unexpectedly" in error_msg:
+            guidance = "SSL handshake failed. The new connection method should try multiple SSL modes automatically."
         elif "SSL" in error_msg:
             guidance = "SSL connection issue. Try adding ?sslmode=prefer to DATABASE_URL."
         elif "authentication failed" in error_msg:
             guidance = "Wrong username/password. Check DATABASE_URL credentials."
+        elif "timeout" in error_msg.lower():
+            guidance = "Connection timeout. Database may be sleeping or overloaded."
         
         return {
             "status": "error", 
