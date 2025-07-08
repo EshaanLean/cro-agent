@@ -12,14 +12,12 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 import google.generativeai as genai
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from flask import current_app
 
 def get_db_conn():
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         raise Exception("DATABASE_URL not set!")
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
-
 
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
@@ -53,10 +51,7 @@ def _prepare_image(pil_img: Image.Image) -> Image.Image:
     return pil_img
 
 def _extract_json(text: str) -> dict:
-    """Enhanced JSON extraction with multiple fallback methods"""
     flushprint(f"Attempting to extract JSON from response (length: {len(text)})")
-    
-    # Method 1: Find JSON between ```json and ``` markers
     json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
     if json_match:
         flushprint("Found JSON in code block")
@@ -64,8 +59,7 @@ def _extract_json(text: str) -> dict:
             return json.loads(json_match.group(1))
         except json.JSONDecodeError as e:
             flushprint(f"JSON decode error in code block: {e}")
-    
-    # Method 2: Find JSON between { and } (original method)
+
     start = text.find('{')
     end = text.rfind('}')
     if start != -1 and end != -1 and end > start:
@@ -75,8 +69,7 @@ def _extract_json(text: str) -> dict:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
             flushprint(f"JSON decode error: {e}")
-    
-    # Method 3: Look for multiple JSON objects and take the first valid one
+
     json_objects = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text)
     for json_candidate in json_objects:
         try:
@@ -85,8 +78,7 @@ def _extract_json(text: str) -> dict:
             return result
         except json.JSONDecodeError:
             continue
-    
-    # Method 4: Try to extract key-value pairs and construct JSON
+
     flushprint("Attempting to construct JSON from key-value pairs")
     try:
         lines = text.split('\n')
@@ -96,14 +88,12 @@ def _extract_json(text: str) -> dict:
                 key_match = re.search(r'"([^"]+)":\s*"([^"]*)"', line)
                 if key_match:
                     json_data[key_match.group(1)] = key_match.group(2)
-        
         if json_data:
             flushprint(f"Constructed JSON from {len(json_data)} key-value pairs")
             return json_data
     except Exception as e:
         flushprint(f"Error constructing JSON: {e}")
-    
-    # If all methods fail, return error with snippet
+
     snippet = text.strip().replace('\n', ' ')[:500]
     flushprint(f"All JSON extraction methods failed. Response snippet: {snippet}")
     raise ValueError(f"No valid JSON found in model response. Response snippet: {snippet}")
@@ -139,13 +129,11 @@ def get_screenshot_from_db(name, url):
 
 @app.route('/screenshot/<name>')
 def serve_screenshot(name):
-    # url = ... (if you want to filter by url too)
     image_bytes = get_screenshot_from_db(name, None)
     if image_bytes:
         return send_file(io.BytesIO(image_bytes), mimetype='image/png')
     else:
         return "Not found", 404
-
 
 # ------------- HTML TEMPLATE --------------------
 HTML = """
@@ -185,9 +173,7 @@ HTML = """
 <body>
 <div class="container">
   <h1>🚀 Dynamic Landing Page Analyzer</h1>
-  
   <form method="POST" enctype="multipart/form-data" id="analysisForm">
-    
     <div class="section">
       <h3>1. Configure URLs</h3>
       <div id="urlInputs">
@@ -204,12 +190,10 @@ HTML = """
       </div>
       <button type="button" class="add-url-btn" onclick="addUrl()">+ Add Another URL</button>
     </div>
-
     <div class="section">
       <h3>2. Analysis Prompt</h3>
       <textarea name="prompt" rows="6" placeholder="Enter your analysis prompt...">{{ prompt or default_prompt }}</textarea>
     </div>
-
     <div class="section">
       <h3>3. Manual Screenshots (Optional)</h3>
       <input type="file" name="screenshots" multiple accept=".png,.jpg,.jpeg">
@@ -226,23 +210,18 @@ HTML = """
         <p><strong>Example:</strong> For udemy.com, save as <code>udemy_manual.png</code></p>
       </div>
     </div>
-
     <button type="submit" class="analyze-btn" onclick="showLoading()">🔍 Run Analysis</button>
   </form>
-
   <div id="loading" class="loading" style="display:none;">
     <div class="spinner"></div>
     <p>Analyzing landing pages... This may take a few minutes.</p>
   </div>
-
   {% if error %}
     <div class="error">{{ error }}</div>
   {% endif %}
-  
   {% if success %}
     <div class="success">{{ success }}</div>
   {% endif %}
-  
   {% if summary %}
     <div class="result">
       <h2>📊 Analysis Complete!</h2>
@@ -257,7 +236,6 @@ HTML = """
     </div>
   {% endif %}
 </div>
-
 <script>
 function addUrl() {
   const container = document.getElementById('urlInputs');
@@ -275,14 +253,12 @@ function addUrl() {
   `;
   container.appendChild(newRow);
 }
-
 function removeUrl(button) {
   const rows = document.querySelectorAll('.url-row');
   if (rows.length > 1) {
     button.parentElement.remove();
   }
 }
-
 function showLoading() {
   document.getElementById('loading').style.display = 'block';
   document.getElementById('analysisForm').style.display = 'none';
@@ -291,6 +267,7 @@ function showLoading() {
 </body>
 </html>
 """
+
 
 def save_manual_screenshots(files):
     uploaded_names = []
