@@ -13,6 +13,22 @@ import google.generativeai as genai
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+def flushprint(*args, **kwargs):
+    print(*args, **kwargs)
+    sys.stdout.flush()
+
+def get_db_conn():
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise Exception("DATABASE_URL not set!")
+    # Ensure no trailing newline/quotes and append sslmode correctly
+    db_url = db_url.strip().replace('"', '').replace("'", "")
+    if "render.com" in db_url or "dpg-" in db_url:
+        if "sslmode=" not in db_url:
+            separator = "&" if "?" in db_url else "?"
+            db_url = f"{db_url}{separator}sslmode=require"
+    return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+
 def test_db_connection():
     try:
         conn = get_db_conn()
@@ -22,23 +38,6 @@ def test_db_connection():
         conn.close()
     except Exception as e:
         print("Database connection failed:", e)
-
-# Test DB at startup
-test_db_connection()
-
-
-def get_db_conn():
-    db_url = os.environ.get("DATABASE_URL")
-    if not db_url:
-        raise Exception("DATABASE_URL not set!")
-    
-    # For Render PostgreSQL, ensure SSL mode is set
-    if "render.com" in db_url or "dpg-" in db_url:
-        if "sslmode=" not in db_url:
-            separator = "&" if "?" in db_url else "?"
-            db_url = f"{db_url}{separator}sslmode=prefer"
-    
-    return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 def init_database():
     """Initialize database tables if they don't exist"""
@@ -57,7 +56,6 @@ def init_database():
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
-                    
                     # Create analysis_results table for CSV and reports
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS analysis_results (
@@ -71,23 +69,18 @@ def init_database():
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
-                    
                     print("Database tables initialized successfully")
         finally:
             conn.close()
     except Exception as e:
         print(f"Error initializing database: {e}")
         print("App will continue running, but database features may not work")
-        # Don't raise the exception - let the app start anyway
-
-def flushprint(*args, **kwargs):
-    print(*args, **kwargs)
-    sys.stdout.flush()
 
 flushprint("=== Dynamic Landing Page Analyzer starting up ===")
 
 # Initialize database on startup
 init_database()
+test_db_connection()
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
 if not API_KEY:
