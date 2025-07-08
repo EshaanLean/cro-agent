@@ -107,8 +107,10 @@ def save_screenshot_to_db(name, url, image_bytes):
                     "INSERT INTO screenshots (name, url, image) VALUES (%s, %s, %s)",
                     (name, url, psycopg2.Binary(image_bytes))
                 )
+        print(f"Saved screenshot for {name} ({url}) in DB, bytes: {len(image_bytes)}")
     finally:
         conn.close()
+
 
 def get_screenshot_from_db(name, url):
     conn = get_db_conn()
