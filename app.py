@@ -136,6 +136,19 @@ def serve_screenshot(name):
         return send_file(io.BytesIO(image_bytes), mimetype='image/png')
     else:
         return "Not found", 404
+    
+@app.route('/screenshots')
+def list_screenshots():
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, url, created_at FROM screenshots ORDER BY created_at DESC LIMIT 20;")
+                rows = cur.fetchall()
+        return jsonify(rows)
+    finally:
+        conn.close()
+
 
 # ------------- HTML TEMPLATE --------------------
 HTML = """
