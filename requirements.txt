@@ -4,4 +4,5 @@ pillow
 google-generativeai
 playwright
 tldextract
+psycopg2-binary
 

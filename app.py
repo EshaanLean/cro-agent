@@ -10,6 +10,16 @@ import zipfile
 from PIL import Image, ImageOps
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import google.generativeai as genai
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from flask import current_app
+
+def get_db_conn():
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise Exception("DATABASE_URL not set!")
+    return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+
 
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
@@ -97,6 +107,44 @@ def _extract_json(text: str) -> dict:
     snippet = text.strip().replace('\n', ' ')[:500]
     flushprint(f"All JSON extraction methods failed. Response snippet: {snippet}")
     raise ValueError(f"No valid JSON found in model response. Response snippet: {snippet}")
+
+def save_screenshot_to_db(name, url, image_bytes):
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO screenshots (name, url, image) VALUES (%s, %s, %s)",
+                    (name, url, psycopg2.Binary(image_bytes))
+                )
+    finally:
+        conn.close()
+
+def get_screenshot_from_db(name, url):
+    conn = get_db_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT image FROM screenshots WHERE name=%s AND url=%s ORDER BY created_at DESC LIMIT 1",
+                    (name, url)
+                )
+                row = cur.fetchone()
+                if row:
+                    return row["image"]
+                else:
+                    return None
+    finally:
+        conn.close()
+
+@app.route('/screenshot/<name>')
+def serve_screenshot(name):
+    # url = ... (if you want to filter by url too)
+    image_bytes = get_screenshot_from_db(name, None)
+    if image_bytes:
+        return send_file(io.BytesIO(image_bytes), mimetype='image/png')
+    else:
+        return "Not found", 404
 
 
 # ------------- HTML TEMPLATE --------------------
