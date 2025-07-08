@@ -18,12 +18,11 @@ def get_db_conn():
     if not db_url:
         raise Exception("DATABASE_URL not set!")
     
-    # Add SSL configuration for Render PostgreSQL
-    if "render.com" in db_url:
-        # For Render PostgreSQL, add SSL mode if not already present
+    # For Render PostgreSQL, ensure SSL mode is set
+    if "render.com" in db_url or "dpg-" in db_url:
         if "sslmode=" not in db_url:
             separator = "&" if "?" in db_url else "?"
-            db_url = f"{db_url}{separator}sslmode=require"
+            db_url = f"{db_url}{separator}sslmode=prefer"
     
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
@@ -940,6 +939,45 @@ def download_all():
 @app.route("/ping")
 def ping():
     return "pong"
+
+@app.route('/test-db')
+def test_db():
+    """Test database connection for debugging"""
+    try:
+        db_url = os.environ.get("DATABASE_URL", "Not set")
+        
+        # Mask sensitive parts of URL for logging
+        masked_url = db_url
+        if "@" in db_url:
+            parts = db_url.split("@")
+            if len(parts) > 1:
+                masked_url = f"{parts[0].split('://')[0]}://***:***@{parts[1]}"
+        
+        print(f"Testing connection with URL: {masked_url}")
+        
+        conn = get_db_conn()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT version();")
+                result = cur.fetchone()
+                cur.execute("SELECT current_database();")
+                db_name = cur.fetchone()
+        conn.close()
+        
+        return {
+            "status": "success",
+            "message": "Database connected successfully!",
+            "database": db_name['current_database'] if db_name else "unknown",
+            "version": result['version'][:50] + "..." if result else "unknown"
+        }
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Database connection test failed: {error_msg}")
+        return {
+            "status": "error", 
+            "message": f"Database connection failed: {error_msg}",
+            "url_format": "Using: " + (masked_url if 'masked_url' in locals() else "URL not available")
+        }, 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
