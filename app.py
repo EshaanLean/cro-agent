@@ -17,44 +17,55 @@ def get_db_conn():
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         raise Exception("DATABASE_URL not set!")
+    
+    # Add SSL configuration for Render PostgreSQL
+    if "render.com" in db_url:
+        # For Render PostgreSQL, add SSL mode if not already present
+        if "sslmode=" not in db_url:
+            separator = "&" if "?" in db_url else "?"
+            db_url = f"{db_url}{separator}sslmode=require"
+    
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 def init_database():
     """Initialize database tables if they don't exist"""
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                # Create screenshots table
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS screenshots (
-                        id SERIAL PRIMARY KEY,
-                        name VARCHAR(255) NOT NULL,
-                        url TEXT,
-                        image BYTEA,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                # Create analysis_results table for CSV and reports
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS analysis_results (
-                        id SERIAL PRIMARY KEY,
-                        session_id VARCHAR(255) NOT NULL,
-                        file_type VARCHAR(50) NOT NULL,
-                        file_name VARCHAR(255) NOT NULL,
-                        content TEXT,
-                        file_data BYTEA,
-                        client_name VARCHAR(255),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                print("Database tables initialized successfully")
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    # Create screenshots table
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS screenshots (
+                            id SERIAL PRIMARY KEY,
+                            name VARCHAR(255) NOT NULL,
+                            url TEXT,
+                            image BYTEA,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    # Create analysis_results table for CSV and reports
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS analysis_results (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(255) NOT NULL,
+                            file_type VARCHAR(50) NOT NULL,
+                            file_name VARCHAR(255) NOT NULL,
+                            content TEXT,
+                            file_data BYTEA,
+                            client_name VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    print("Database tables initialized successfully")
+        finally:
+            conn.close()
     except Exception as e:
         print(f"Error initializing database: {e}")
-    finally:
-        conn.close()
+        print("App will continue running, but database features may not work")
+        # Don't raise the exception - let the app start anyway
 
 def flushprint(*args, **kwargs):
     print(*args, **kwargs)
@@ -140,77 +151,91 @@ def _extract_json(text: str) -> dict:
 
 def save_screenshot_to_db(name, url, image_bytes):
     """Save screenshot to database"""
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO screenshots (name, url, image) VALUES (%s, %s, %s)",
-                    (name, url, psycopg2.Binary(image_bytes))
-                )
-        print(f"Saved screenshot for {name} ({url}) in DB, bytes: {len(image_bytes)}")
-    finally:
-        conn.close()
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO screenshots (name, url, image) VALUES (%s, %s, %s)",
+                        (name, url, psycopg2.Binary(image_bytes))
+                    )
+            print(f"Saved screenshot for {name} ({url}) in DB, bytes: {len(image_bytes)}")
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error saving screenshot to database: {e}")
+        # Don't raise - continue without DB save
 
 def save_analysis_result_to_db(session_id, file_type, file_name, content=None, file_data=None, client_name=None):
     """Save analysis results (CSV, reports) to database"""
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO analysis_results 
-                       (session_id, file_type, file_name, content, file_data, client_name) 
-                       VALUES (%s, %s, %s, %s, %s, %s)""",
-                    (session_id, file_type, file_name, content, 
-                     psycopg2.Binary(file_data) if file_data else None, client_name)
-                )
-        print(f"Saved {file_type} to database: {file_name}")
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO analysis_results 
+                           (session_id, file_type, file_name, content, file_data, client_name) 
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (session_id, file_type, file_name, content, 
+                         psycopg2.Binary(file_data) if file_data else None, client_name)
+                    )
+            print(f"Saved {file_type} to database: {file_name}")
+        finally:
+            conn.close()
     except Exception as e:
         print(f"Error saving {file_type} to database: {e}")
-    finally:
-        conn.close()
+        # Don't raise - continue without DB save
 
 def get_screenshot_from_db(name, url=None):
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                if url:
-                    cur.execute(
-                        "SELECT image FROM screenshots WHERE name=%s AND url=%s ORDER BY created_at DESC LIMIT 1",
-                        (name, url)
-                    )
-                else:
-                    cur.execute(
-                        "SELECT image FROM screenshots WHERE name=%s ORDER BY created_at DESC LIMIT 1",
-                        (name,)
-                    )
-                row = cur.fetchone()
-                if row:
-                    return row["image"]
-                else:
-                    return None
-    finally:
-        conn.close()
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    if url:
+                        cur.execute(
+                            "SELECT image FROM screenshots WHERE name=%s AND url=%s ORDER BY created_at DESC LIMIT 1",
+                            (name, url)
+                        )
+                    else:
+                        cur.execute(
+                            "SELECT image FROM screenshots WHERE name=%s ORDER BY created_at DESC LIMIT 1",
+                            (name,)
+                        )
+                    row = cur.fetchone()
+                    if row:
+                        return row["image"]
+                    else:
+                        return None
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error retrieving screenshot from database: {e}")
+        return None
 
 def get_analysis_result_from_db(session_id, file_type):
     """Retrieve analysis results from database"""
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT file_name, content, file_data FROM analysis_results WHERE session_id=%s AND file_type=%s ORDER BY created_at DESC LIMIT 1",
-                    (session_id, file_type)
-                )
-                row = cur.fetchone()
-                if row:
-                    return row
-                else:
-                    return None
-    finally:
-        conn.close()
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT file_name, content, file_data FROM analysis_results WHERE session_id=%s AND file_type=%s ORDER BY created_at DESC LIMIT 1",
+                        (session_id, file_type)
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        return row
+                    else:
+                        return None
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"Error retrieving analysis result from database: {e}")
+        return None
 
 @app.route('/screenshot/<name>')
 def serve_screenshot(name):
@@ -222,32 +247,38 @@ def serve_screenshot(name):
     
 @app.route('/screenshots')
 def list_screenshots():
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id, name, url, created_at FROM screenshots ORDER BY created_at DESC LIMIT 20;")
-                rows = cur.fetchall()
-        return jsonify(rows)
-    finally:
-        conn.close()
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id, name, url, created_at FROM screenshots ORDER BY created_at DESC LIMIT 20;")
+                    rows = cur.fetchall()
+            return jsonify(rows)
+        finally:
+            conn.close()
+    except Exception as e:
+        return jsonify({"error": f"Database error: {str(e)}"}), 500
 
 @app.route('/analysis_results')
 def list_analysis_results():
     """List recent analysis results"""
-    conn = get_db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT session_id, file_type, file_name, client_name, created_at 
-                    FROM analysis_results 
-                    ORDER BY created_at DESC LIMIT 50
-                """)
-                rows = cur.fetchall()
-        return jsonify(rows)
-    finally:
-        conn.close()
+        conn = get_db_conn()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT session_id, file_type, file_name, client_name, created_at 
+                        FROM analysis_results 
+                        ORDER BY created_at DESC LIMIT 50
+                    """)
+                    rows = cur.fetchall()
+            return jsonify(rows)
+        finally:
+            conn.close()
+    except Exception as e:
+        return jsonify({"error": f"Database error: {str(e)}"}), 500
 
 # ------------- HTML TEMPLATE --------------------
 HTML = """
