@@ -29,8 +29,8 @@ def get_db_conn():
         # Remove the incorrect 'ssl' parameter if it exists from a previous config
         query_params.pop('ssl', None)
 
-        # Set the correct 'sslmode' parameter
-        query_params['sslmode'] = ['require'] # parse_qs expects values in a list
+        # Set the SSL mode to 'prefer'
+        query_params['sslmode'] = ['prefer'] # Use 'prefer' instead of 'require'
 
         # Rebuild the query string and then the full URL
         new_query = urllib.parse.urlencode(query_params, doseq=True)
