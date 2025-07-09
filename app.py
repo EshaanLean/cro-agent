@@ -398,6 +398,7 @@ HTML = """
       <div class="download-section">
         <h3>Download Results:</h3>
         <a href="/download/csv" class="download-btn">📄 Download CSV Data</a>
+        <a href="/download/sections" class="download-btn">📊 Download Section Comparison</a>
         <a href="/download/report" class="download-btn">📑 Download Report</a>
         <a href="/download/all" class="download-btn">📦 Download All Files</a>
       </div>
@@ -463,7 +464,7 @@ def extract_site_name(url):
         flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
 
-def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None) -> dict:
+def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, all_providers=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
         model = genai.GenerativeModel('gemini-2.5-pro')
@@ -475,20 +476,33 @@ def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, p
 {page_content[:15000]}
 ---""" if page_content else ""
 
+        # If we have all providers info, include it in the prompt for better section identification
+        providers_context = ""
+        if all_providers:
+            providers_list = ", ".join([p['name'] for p in all_providers])
+            providers_context = f"\nYou are analyzing landing pages in the same industry. Other providers being analyzed: {providers_list}"
+
         default_prompt = f"""
-You are a digital marketing and CRO expert. Analyze this landing page screenshot and text content for '{provider_name}'.
+You are a digital marketing and CRO expert. Analyze this landing page screenshot and text content for '{provider_name}'.{providers_context}
 
 **CRITICAL INSTRUCTIONS:**
 1. You MUST respond with ONLY valid JSON - no other text, no explanations, no markdown
 2. Do not include any text before or after the JSON
 3. The JSON must be properly formatted and parseable
+4. Analyze BOTH above-the-fold AND below-the-fold content
+5. Dynamically identify sections that are relevant to this specific industry/vertical
 
 **Webpage Information**
 - **Provider:** {provider_name}
 - **URL:** {url}
 {prompt_text_section}
 
-Return ONLY this JSON structure (no other text):
+**Your Task:**
+1. First, identify all major sections visible on this landing page (both above and below the fold)
+2. For each section, note if it exists (true/false)
+3. Use industry-relevant section names that would apply to competitors in this space
+
+Return ONLY this JSON structure:
 
 {{
   "Platform": "{provider_name}",
@@ -502,19 +516,44 @@ Return ONLY this JSON structure (no other text):
   "Visual_Design": "Description of visual design, colors, layout style",
   "Above_Fold_Elements": "Key elements visible without scrolling",
   "Pricing_Info": "Any pricing information visible",
-  "Course_Type": "Type of course, program, or service offered",
   "Target_Audience": "Apparent target audience based on messaging",
   "Unique_Selling_Points": "Key differentiators or unique features mentioned",
   "Lead_Generation_Type": "Type of conversion (direct purchase, free trial, lead gen, etc.)",
-  "Form_Placement": "Position and type of forms visible",
-  "Navigation_Style": "Description of navigation menu and structure",
-  "Overall_Strategy": "Assessment of overall conversion strategy and approach"
-}}"""
+  "Above_Fold_Sections": {{
+    "Hero_Section": true/false,
+    "Navigation_Bar": true/false,
+    "Value_Proposition": true/false,
+    "CTA_Buttons": true/false,
+    "Trust_Indicators": true/false,
+    "Feature_Highlights": true/false
+  }},
+  "Below_Fold_Sections": {{
+    // Dynamically identify sections based on what you see. Examples might include:
+    // For education: "Course_Curriculum", "Student_Testimonials", "Instructor_Profiles", "Pricing_Cards", "FAQ_Section"
+    // For SaaS: "Feature_List", "Integration_Partners", "Customer_Logos", "Pricing_Tiers", "Demo_Video"
+    // For e-commerce: "Product_Categories", "Customer_Reviews", "Shipping_Info", "Return_Policy"
+    // Add whatever sections are actually present on this specific page
+  }},
+  "Industry_Specific_Elements": {{
+    // Add elements specific to this industry vertical
+    // Examples: "Certification_Info", "Course_Duration", "Prerequisites", "Job_Placement_Stats", etc.
+  }},
+  "Section_Details": {{
+    // For each major section identified, provide a brief description
+    // Example: "Student_Testimonials": "Video testimonials from 3 graduates with success stories"
+  }}
+}}
+
+IMPORTANT: 
+- In "Below_Fold_Sections", dynamically add key-value pairs for ALL sections you can identify on the page
+- Use descriptive, industry-relevant names for sections (e.g., "Student_Success_Stories" not just "testimonials")
+- Set value to true if section exists, false if it doesn't
+- Be comprehensive - identify ALL major content sections on the page"""
 
         prompt = prompt_override or default_prompt
         if prompt_override:
-            # If custom prompt, ensure it asks for JSON format
-            prompt = f"{prompt_override}\n\nIMPORTANT: Return your analysis ONLY as valid JSON with these fields: Platform, URL, Main_Offer, Primary_CTA, Secondary_CTA, Headline, Subheadline, Trust_Elements, Visual_Design, Above_Fold_Elements, Pricing_Info, Course_Type, Target_Audience, Unique_Selling_Points, Lead_Generation_Type, Form_Placement, Navigation_Style, Overall_Strategy"
+            # If custom prompt, ensure it asks for JSON format with section analysis
+            prompt = f"{prompt_override}\n\nIMPORTANT: Return your analysis ONLY as valid JSON. Include analysis of both above-the-fold and below-the-fold sections. Dynamically identify all major sections on the page and note their presence (true/false)."
 
         flushprint("Sending request to Gemini...")
         response = model.generate_content([prompt, pil_img])
@@ -529,6 +568,13 @@ Return ONLY this JSON structure (no other text):
             result_dict = _extract_json(response.text)
             # Ensure required fields are present
             result_dict.update({"Platform": provider_name, "URL": url})
+            
+            # Ensure section structures exist
+            if "Above_Fold_Sections" not in result_dict:
+                result_dict["Above_Fold_Sections"] = {}
+            if "Below_Fold_Sections" not in result_dict:
+                result_dict["Below_Fold_Sections"] = {}
+                
             flushprint("JSON parsed successfully")
             return result_dict
         except Exception as e:
@@ -546,13 +592,12 @@ Return ONLY this JSON structure (no other text):
                 "Visual_Design": "N/A",
                 "Above_Fold_Elements": "N/A",
                 "Pricing_Info": "N/A",
-                "Course_Type": "N/A",
                 "Target_Audience": "N/A",
                 "Unique_Selling_Points": "N/A",
                 "Lead_Generation_Type": "N/A",
-                "Form_Placement": "N/A",
-                "Navigation_Style": "N/A",
-                "Overall_Strategy": "N/A",
+                "Above_Fold_Sections": {},
+                "Below_Fold_Sections": {},
+                "Industry_Specific_Elements": {},
                 "error": f"JSON parse error: {str(e)}",
                 "raw_response_snippet": response.text[:200] if response.text else "No response"
             }
@@ -571,76 +616,130 @@ Return ONLY this JSON structure (no other text):
             "Visual_Design": "N/A",
             "Above_Fold_Elements": "N/A",
             "Pricing_Info": "N/A",
-            "Course_Type": "N/A",
             "Target_Audience": "N/A",
             "Unique_Selling_Points": "N/A",
             "Lead_Generation_Type": "N/A",
-            "Form_Placement": "N/A",
-            "Navigation_Style": "N/A",
-            "Overall_Strategy": "N/A",
+            "Above_Fold_Sections": {},
+            "Below_Fold_Sections": {},
+            "Industry_Specific_Elements": {},
             "error": f"Gemini API error: {str(e)}"
         }
 
 
-def generate_summary_report(course_data_df: pd.DataFrame, client_name: str) -> str:
-    flushprint(f"Generating summary report with client: {client_name}")
-    try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
+def consolidate_sections_across_providers(all_course_data):
+    """
+    Consolidate all unique sections found across all providers
+    Returns a dictionary with section names and which providers have them
+    """
+    flushprint("Consolidating sections across all providers")
+    
+    # Collect all unique sections
+    all_above_fold_sections = set()
+    all_below_fold_sections = set()
+    all_industry_sections = set()
+    
+    for provider_data in all_course_data:
+        if 'error' in provider_data:
+            continue
+            
+        # Collect above fold sections
+        if 'Above_Fold_Sections' in provider_data and isinstance(provider_data['Above_Fold_Sections'], dict):
+            all_above_fold_sections.update(provider_data['Above_Fold_Sections'].keys())
         
-        data_string = course_data_df.to_csv(index=False)
+        # Collect below fold sections
+        if 'Below_Fold_Sections' in provider_data and isinstance(provider_data['Below_Fold_Sections'], dict):
+            all_below_fold_sections.update(provider_data['Below_Fold_Sections'].keys())
+            
+        # Collect industry specific elements
+        if 'Industry_Specific_Elements' in provider_data and isinstance(provider_data['Industry_Specific_Elements'], dict):
+            all_industry_sections.update(provider_data['Industry_Specific_Elements'].keys())
+    
+    flushprint(f"Found {len(all_above_fold_sections)} above-fold sections")
+    flushprint(f"Found {len(all_below_fold_sections)} below-fold sections")
+    flushprint(f"Found {len(all_industry_sections)} industry-specific sections")
+    
+    return {
+        'above_fold': sorted(list(all_above_fold_sections)),
+        'below_fold': sorted(list(all_below_fold_sections)),
+        'industry_specific': sorted(list(all_industry_sections))
+    }
+
+
+def create_section_comparison_dataframe(all_course_data):
+    """
+    Create a DataFrame showing which providers have which sections
+    Similar to the screenshot example with checkmarks
+    """
+    flushprint("Creating section comparison dataframe")
+    
+    # Get all unique sections
+    sections = consolidate_sections_across_providers(all_course_data)
+    
+    # Create comparison data
+    comparison_data = []
+    
+    # Add header row for section types
+    comparison_data.append({
+        'Section': '=== ABOVE THE FOLD ===',
+        **{provider['Platform']: '' for provider in all_course_data if 'error' not in provider}
+    })
+    
+    # Add above fold sections
+    for section in sections['above_fold']:
+        row = {'Section': section}
+        for provider in all_course_data:
+            if 'error' in provider:
+                row[provider['Platform']] = '❌'
+            else:
+                above_fold = provider.get('Above_Fold_Sections', {})
+                if isinstance(above_fold, dict):
+                    row[provider['Platform']] = '✅' if above_fold.get(section, False) else '❌'
+                else:
+                    row[provider['Platform']] = '❌'
+        comparison_data.append(row)
+    
+    # Add separator
+    comparison_data.append({
+        'Section': '=== BELOW THE FOLD ===',
+        **{provider['Platform']: '' for provider in all_course_data if 'error' not in provider}
+    })
+    
+    # Add below fold sections
+    for section in sections['below_fold']:
+        row = {'Section': section}
+        for provider in all_course_data:
+            if 'error' in provider:
+                row[provider['Platform']] = '❌'
+            else:
+                below_fold = provider.get('Below_Fold_Sections', {})
+                if isinstance(below_fold, dict):
+                    row[provider['Platform']] = '✅' if below_fold.get(section, False) else '❌'
+                else:
+                    row[provider['Platform']] = '❌'
+        comparison_data.append(row)
+    
+    # Add industry specific if any
+    if sections['industry_specific']:
+        comparison_data.append({
+            'Section': '=== INDUSTRY SPECIFIC ===',
+            **{provider['Platform']: '' for provider in all_course_data if 'error' not in provider}
+        })
         
-        client_row = course_data_df[course_data_df['Platform'].str.lower() == client_name.lower()]
-        client_url = client_row['URL'].iloc[0] if not client_row.empty else "Not specified"
-        
-        competitor_info = []
-        for _, row in course_data_df.iterrows():
-            if row['Platform'].lower() != client_name.lower():
-                competitor_info.append(f"- {row['Platform']}: {row['URL']}")
-        
-        competitor_urls = "\n".join(competitor_info)
+        for section in sections['industry_specific']:
+            row = {'Section': section}
+            for provider in all_course_data:
+                if 'error' in provider:
+                    row[provider['Platform']] = '❌'
+                else:
+                    industry_specific = provider.get('Industry_Specific_Elements', {})
+                    if isinstance(industry_specific, dict):
+                        row[provider['Platform']] = '✅' if industry_specific.get(section, False) else '❌'
+                    else:
+                        row[provider['Platform']] = '❌'
+            comparison_data.append(row)
+    
+    return pd.DataFrame(comparison_data)
 
-        prompt = f"""
-        You are a CRO and digital strategy expert. Analyze the landing page performance of '{client_name}' compared to its competitors.
-
-        📌 **Client Landing Page:** {client_url}
-        **Client Name:** {client_name}
-
-        **Competitor Landing Pages:**
-        {competitor_urls}
-
-        **Detailed Comparison Data (CSV):**
-        ```csv
-        {data_string}
-        ```
-
-        🎯 **Your Task:**
-        1. Write a **Strategic Executive Summary** for {client_name} identifying key conversion optimization opportunities
-        2. Create a **Competitive Analysis Overview** highlighting how {client_name} compares to competitors
-        3. Provide a **Priority Opportunities Table** with:
-           - Opportunity
-           - Impact Level (High/Medium/Low)
-           - Implementation Difficulty (Easy/Medium/Hard)
-           - Rationale (competitor insight or CRO best practice)
-           - Specific Tactical Recommendations
-        4. Conclude with **Strategic Recommendations** for immediate action
-
-        **Focus Areas:**
-        - Above-the-fold optimization
-        - CTA placement and messaging
-        - Trust signal improvements
-        - Value proposition clarity
-        - User experience enhancements
-        - Conversion funnel optimization
-
-        Present your response in clean, professional markdown format suitable for executive presentation.
-        """
-
-        response = model.generate_content(prompt)
-        return response.text
-        
-    except Exception as e:
-        flushprint(f"Failed to generate summary report: {e}")
-        return f"Error generating summary report: {str(e)}"
 
 # -- Main analyzer function --
 def analyze_landing_pages(landing_pages, prompt_override=None):
@@ -696,8 +795,9 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                         save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
                         
                         page_content = ""
+                        # UPDATED: Pass landing_pages as the last parameter for context
                         structured_data = get_multimodal_analysis_from_gemini(
-                            page_content, image_bytes, lp['name'], lp['url'], prompt_override
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
                         )
                         structured_data['Type'] = lp.get('type', 'manual')
                         all_course_data.append(structured_data)
@@ -728,8 +828,9 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                         save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
                         
                         page_content = page.inner_text('body')
+                        # UPDATED: Pass landing_pages as the last parameter for context
                         structured_data = get_multimodal_analysis_from_gemini(
-                            page_content, image_bytes, lp['name'], lp['url'], prompt_override
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
                         )
                         structured_data['Type'] = lp.get('type', 'competitor')
                         all_course_data.append(structured_data)
@@ -774,7 +875,7 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
             "error": "No data was collected"
         })
 
-    # Save CSV (local and database)
+    # Save main analysis CSV (local and database)
     df = pd.DataFrame(all_course_data)
     csv_path = os.path.join(session_dir, "competitive_analysis_data.csv")
     df.to_csv(csv_path, index=False)
@@ -786,11 +887,28 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
     save_analysis_result_to_db(session_id, 'csv', 'competitive_analysis_data.csv', 
                                content=df.to_csv(index=False), file_data=csv_bytes, client_name=client_name)
     
+    # NEW: Create section comparison table
+    section_comparison_df = create_section_comparison_dataframe(all_course_data)
+    section_csv_path = os.path.join(session_dir, "section_comparison_table.csv")
+    section_comparison_df.to_csv(section_csv_path, index=False)
+    flushprint(f"Section comparison table saved to {section_csv_path}")
+    
+    # NEW: Save section comparison to database
+    with open(section_csv_path, 'rb') as f:
+        section_csv_bytes = f.read()
+    save_analysis_result_to_db(session_id, 'section_comparison', 'section_comparison_table.csv',
+                               content=section_comparison_df.to_csv(index=False), 
+                               file_data=section_csv_bytes, client_name=client_name)
+    
+    # NEW: Store path for downloads
+    app.config['LAST_SECTION_CSV_PATH'] = section_csv_path
+    
     # Generate summary report
     successful_df = df[df['error'].isnull()].copy() if 'error' in df.columns else df
     
     if not successful_df.empty:
-        summary_report = generate_summary_report(successful_df, client_name)
+        # UPDATED: Pass section_comparison_df to generate_summary_report
+        summary_report = generate_summary_report(successful_df, client_name, section_comparison_df)
         report_path = os.path.join(session_dir, "summary_and_recommendations.md")
         with open(report_path, "w", encoding='utf-8') as f:
             f.write(summary_report)
@@ -812,6 +930,85 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
     
     return summary_report, csv_path
 
+
+def generate_summary_report(course_data_df: pd.DataFrame, client_name: str, section_comparison_df: pd.DataFrame = None) -> str:
+    flushprint(f"Generating summary report with client: {client_name}")
+    try:
+        model = genai.GenerativeModel('gemini-2.5-pro')
+        
+        data_string = course_data_df.to_csv(index=False)
+        
+        # NEW: Include section comparison if available
+        section_comparison_string = ""
+        if section_comparison_df is not None:
+            section_comparison_string = f"""
+        
+        **Section Presence Comparison Table:**
+        ```csv
+        {section_comparison_df.to_csv(index=False)}
+        ```"""
+        
+        client_row = course_data_df[course_data_df['Platform'].str.lower() == client_name.lower()]
+        client_url = client_row['URL'].iloc[0] if not client_row.empty else "Not specified"
+        
+        competitor_info = []
+        for _, row in course_data_df.iterrows():
+            if row['Platform'].lower() != client_name.lower():
+                competitor_info.append(f"- {row['Platform']}: {row['URL']}")
+        
+        competitor_urls = "\n".join(competitor_info)
+
+        prompt = f"""
+        You are a CRO and digital strategy expert. Analyze the landing page performance of '{client_name}' compared to its competitors.
+
+        📌 **Client Landing Page:** {client_url}
+        **Client Name:** {client_name}
+
+        **Competitor Landing Pages:**
+        {competitor_urls}
+
+        **Detailed Comparison Data (CSV):**
+        ```csv
+        {data_string}
+        ```
+        {section_comparison_string}
+
+        🎯 **Your Task:**
+        1. Write a **Strategic Executive Summary** for {client_name} identifying key conversion optimization opportunities
+        2. Create a **Competitive Analysis Overview** highlighting how {client_name} compares to competitors
+        3. Provide a **Section Gap Analysis** based on the section comparison table:
+           - Identify critical sections that competitors have but {client_name} is missing
+           - Highlight unique sections that {client_name} has as competitive advantages
+           - Recommend priority sections to add based on industry best practices
+        4. Provide a **Priority Opportunities Table** with:
+           - Opportunity
+           - Impact Level (High/Medium/Low)
+           - Implementation Difficulty (Easy/Medium/Hard)
+           - Rationale (competitor insight or CRO best practice)
+           - Specific Tactical Recommendations
+        5. Conclude with **Strategic Recommendations** for immediate action
+
+        **Focus Areas:**
+        - Above-the-fold optimization
+        - Below-the-fold content gaps and opportunities
+        - CTA placement and messaging
+        - Trust signal improvements
+        - Value proposition clarity
+        - User experience enhancements
+        - Conversion funnel optimization
+        - Missing sections that could improve conversion
+
+        Present your response in clean, professional markdown format suitable for executive presentation.
+        """
+
+        response = model.generate_content(prompt)
+        return response.text
+        
+    except Exception as e:
+        flushprint(f"Failed to generate summary report: {e}")
+        return f"Error generating summary report: {str(e)}"
+    
+
 # --- Routes ---
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -828,6 +1025,8 @@ def index():
     4. Visual design and user experience
     5. Conversion optimization opportunities
     6. Competitive positioning elements
+    7. Identify ALL sections on the page (both above and below the fold)
+    8. Compare section presence across competitors to identify gaps and opportunities
     """
 
     if request.method == "POST":
@@ -909,6 +1108,30 @@ def download_csv():
     if not path or not os.path.exists(path):
         return "No CSV file available. Please run an analysis first.", 404
     return send_file(path, as_attachment=True, download_name="competitive_analysis_data.csv")
+
+# ADD THIS NEW ROUTE HERE (Step 5):
+@app.route('/download/sections')
+def download_sections():
+    flushprint("Download section comparison requested")
+    
+    # Try to get from database first
+    session_id = app.config.get('LAST_SESSION_ID')
+    if session_id:
+        result = get_analysis_result_from_db(session_id, 'section_comparison')
+        if result:
+            return send_file(
+                io.BytesIO(result['file_data']), 
+                as_attachment=True, 
+                download_name=result['file_name'],
+                mimetype='text/csv'
+            )
+    
+    # Fallback to local file
+    path = app.config.get('LAST_SECTION_CSV_PATH')
+    if not path or not os.path.exists(path):
+        return "No section comparison file available. Please run an analysis first.", 404
+    return send_file(path, as_attachment=True, download_name="section_comparison_table.csv")
+
 
 @app.route('/download/report')
 def download_report():
