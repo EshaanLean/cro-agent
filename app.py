@@ -464,165 +464,215 @@ def extract_site_name(url):
         flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
 
+
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, all_providers=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
         pil_img = _prepare_image(Image.open(io.BytesIO(image_bytes)))
 
+        # Text content section
         prompt_text_section = f"""
-- **Text Content (first 15,000 characters):**
----
-{page_content[:15000]}
----""" if page_content else ""
+Text Content Preview (first 5000 chars):
+{page_content[:5000] if page_content else "No text content available"}
+""" 
 
-        # If we have all providers info, include it in the prompt for better section identification
-        providers_context = ""
-        if all_providers:
-            providers_list = ", ".join([p['name'] for p in all_providers])
-            providers_context = f"\nYou are analyzing landing pages in the same industry. Other providers being analyzed: {providers_list}"
+        # The structured prompt that MUST be used
+        structured_prompt = f"""
+Analyze this landing page screenshot for {provider_name} ({url}).
 
-        default_prompt = f"""
-You are a digital marketing and CRO expert. Analyze this landing page screenshot and text content for '{provider_name}'.{providers_context}
+INSTRUCTIONS:
+1. Examine the ENTIRE page - both above and below the fold
+2. Identify ALL sections and elements present on the page
+3. Return ONLY a JSON object with the exact structure shown below
+4. No explanations, no markdown formatting, just the JSON
 
-**CRITICAL INSTRUCTIONS:**
-1. You MUST respond with ONLY valid JSON - no other text, no explanations, no markdown
-2. Do not include any text before or after the JSON
-3. The JSON must be properly formatted and parseable
-4. Analyze BOTH above-the-fold AND below-the-fold content
-5. Dynamically identify sections that are relevant to this specific industry/vertical
-
-**Webpage Information**
-- **Provider:** {provider_name}
-- **URL:** {url}
 {prompt_text_section}
 
-**Your Task:**
-1. First, identify all major sections visible on this landing page (both above and below the fold)
-2. For each section, note if it exists (true/false)
-3. Use industry-relevant section names that would apply to competitors in this space
-
-Return ONLY this JSON structure:
+You MUST return this EXACT JSON structure:
 
 {{
   "Platform": "{provider_name}",
   "URL": "{url}",
-  "Main_Offer": "Describe the main value proposition or product offering",
-  "Primary_CTA": "Primary call-to-action button text and placement",
-  "Secondary_CTA": "Secondary call-to-action if visible",
-  "Headline": "Main headline visible above the fold",
-  "Subheadline": "Supporting headline or tagline",
-  "Trust_Elements": "Trust signals like logos, testimonials, ratings, social proof",
-  "Visual_Design": "Description of visual design, colors, layout style",
-  "Above_Fold_Elements": "Key elements visible without scrolling",
-  "Pricing_Info": "Any pricing information visible",
-  "Target_Audience": "Apparent target audience based on messaging",
-  "Unique_Selling_Points": "Key differentiators or unique features mentioned",
-  "Lead_Generation_Type": "Type of conversion (direct purchase, free trial, lead gen, etc.)",
+  "Main_Offer": "[describe the main product/service offered]",
+  "Primary_CTA": "[primary call-to-action text and location]",
+  "Secondary_CTA": "[secondary CTA if present, or 'None']",
+  "Headline": "[main headline text]",
+  "Subheadline": "[subheadline or tagline text]",
+  "Trust_Elements": "[list trust signals like logos, testimonials, ratings]",
+  "Visual_Design": "[describe design, colors, layout style]",
+  "Above_Fold_Elements": "[list key elements visible without scrolling]",
+  "Pricing_Info": "[pricing details if shown, or 'Not visible']",
+  "Target_Audience": "[identified target audience]",
+  "Unique_Selling_Points": "[key differentiators mentioned]",
+  "Lead_Generation_Type": "[type: email signup, free trial, purchase, etc.]",
   "Above_Fold_Sections": {{
-    "Hero_Section": true/false,
-    "Navigation_Bar": true/false,
-    "Value_Proposition": true/false,
-    "CTA_Buttons": true/false,
-    "Trust_Indicators": true/false,
-    "Feature_Highlights": true/false
+    "Hero_Section": [true/false],
+    "Navigation_Bar": [true/false],
+    "Value_Proposition": [true/false],
+    "CTA_Buttons": [true/false],
+    "Trust_Indicators": [true/false],
+    "Social_Proof": [true/false],
+    "Feature_Preview": [true/false]
   }},
   "Below_Fold_Sections": {{
-    // Dynamically identify sections based on what you see. Examples might include:
-    // For education: "Course_Curriculum", "Student_Testimonials", "Instructor_Profiles", "Pricing_Cards", "FAQ_Section"
-    // For SaaS: "Feature_List", "Integration_Partners", "Customer_Logos", "Pricing_Tiers", "Demo_Video"
-    // For e-commerce: "Product_Categories", "Customer_Reviews", "Shipping_Info", "Return_Policy"
-    // Add whatever sections are actually present on this specific page
-  }},
-  "Industry_Specific_Elements": {{
-    // Add elements specific to this industry vertical
-    // Examples: "Certification_Info", "Course_Duration", "Prerequisites", "Job_Placement_Stats", etc.
-  }},
-  "Section_Details": {{
-    // For each major section identified, provide a brief description
-    // Example: "Student_Testimonials": "Video testimonials from 3 graduates with success stories"
+    "Course_Curriculum": [true/false],
+    "Student_Testimonials": [true/false],
+    "Success_Stories": [true/false],
+    "Instructor_Profiles": [true/false],
+    "Pricing_Section": [true/false],
+    "FAQ_Section": [true/false],
+    "Company_Logos": [true/false],
+    "Certification_Info": [true/false],
+    "Program_Details": [true/false],
+    "Career_Services": [true/false],
+    "Learning_Outcomes": [true/false],
+    "Prerequisites": [true/false],
+    "Time_Commitment": [true/false],
+    "Refund_Policy": [true/false],
+    "Contact_Info": [true/false],
+    "Footer_Section": [true/false],
+    "Blog_Articles": [true/false],
+    "Video_Content": [true/false],
+    "Interactive_Demo": [true/false],
+    "Comparison_Chart": [true/false],
+    "Awards_Recognition": [true/false],
+    "Media_Mentions": [true/false],
+    "Community_Section": [true/false],
+    "Resources_Downloads": [true/false]
   }}
 }}
 
-IMPORTANT: 
-- In "Below_Fold_Sections", dynamically add key-value pairs for ALL sections you can identify on the page
-- Use descriptive, industry-relevant names for sections (e.g., "Student_Success_Stories" not just "testimonials")
-- Set value to true if section exists, false if it doesn't
-- Be comprehensive - identify ALL major content sections on the page"""
+Replace [true/false] with true if the section exists, false if it doesn't.
+Add any additional sections you identify in the Below_Fold_Sections.
+"""
 
-        prompt = prompt_override or default_prompt
-        if prompt_override:
-            # If custom prompt, ensure it asks for JSON format with section analysis
-            prompt = f"{prompt_override}\n\nIMPORTANT: Return your analysis ONLY as valid JSON. Include analysis of both above-the-fold and below-the-fold sections. Dynamically identify all major sections on the page and note their presence (true/false)."
+        # If there's a custom prompt, append it but ensure we still get our structure
+        if prompt_override and prompt_override.strip():
+            final_prompt = structured_prompt + f"\n\nAdditional analysis requirements:\n{prompt_override}\n\nREMEMBER: Still return the JSON structure specified above."
+        else:
+            final_prompt = structured_prompt
 
         flushprint("Sending request to Gemini...")
-        response = model.generate_content([prompt, pil_img])
+        response = model.generate_content([final_prompt, pil_img])
 
         if not response.text or not response.text.strip():
             flushprint("Empty response – retrying without image")
-            response = model.generate_content(prompt)
+            response = model.generate_content(final_prompt)
 
-        flushprint(f"Received response (length: {len(response.text)})")
+        response_text = response.text.strip()
+        flushprint(f"Received response (length: {len(response_text)})")
+        
+        # Clean response
+        if '```json' in response_text:
+            start = response_text.find('```json') + 7
+            end = response_text.rfind('```')
+            if end > start:
+                response_text = response_text[start:end].strip()
+        elif '```' in response_text:
+            start = response_text.find('```') + 3
+            end = response_text.rfind('```')
+            if end > start:
+                response_text = response_text[start:end].strip()
+        
+        # Remove any leading/trailing whitespace or newlines
+        response_text = response_text.strip()
+        
+        # Log for debugging
+        if len(response_text) < 500:
+            flushprint(f"Full cleaned response: {response_text}")
+        else:
+            flushprint(f"Response preview: {response_text[:200]}...")
+            flushprint(f"Response end: ...{response_text[-200:]}")
         
         try:
-            result_dict = _extract_json(response.text)
-            # Ensure required fields are present
-            result_dict.update({"Platform": provider_name, "URL": url})
+            # Parse JSON
+            result_dict = json.loads(response_text)
             
-            # Ensure section structures exist
-            if "Above_Fold_Sections" not in result_dict:
-                result_dict["Above_Fold_Sections"] = {}
-            if "Below_Fold_Sections" not in result_dict:
-                result_dict["Below_Fold_Sections"] = {}
-                
-            flushprint("JSON parsed successfully")
+            # Validate it's a dictionary
+            if not isinstance(result_dict, dict):
+                raise ValueError(f"Expected dict, got {type(result_dict)}")
+            
+            # Ensure critical fields
+            result_dict["Platform"] = provider_name
+            result_dict["URL"] = url
+            
+            # Validate sections are dictionaries
+            if not isinstance(result_dict.get("Above_Fold_Sections"), dict):
+                flushprint("Warning: Above_Fold_Sections is not a dict, creating default")
+                result_dict["Above_Fold_Sections"] = {
+                    "Hero_Section": True,
+                    "Navigation_Bar": True
+                }
+            
+            if not isinstance(result_dict.get("Below_Fold_Sections"), dict):
+                flushprint("Warning: Below_Fold_Sections is not a dict, creating default")
+                result_dict["Below_Fold_Sections"] = {
+                    "Footer_Section": True
+                }
+            
+            # Count sections for logging
+            above_count = len(result_dict.get("Above_Fold_Sections", {}))
+            below_count = len(result_dict.get("Below_Fold_Sections", {}))
+            flushprint(f"Success! Found {above_count} above-fold and {below_count} below-fold sections")
+            
             return result_dict
-        except Exception as e:
-            flushprint(f"JSON parse error: {e}")
-            # Return a fallback structure with error info
+            
+        except json.JSONDecodeError as e:
+            flushprint(f"JSON decode error: {e}")
+            flushprint(f"Failed to parse: {response_text[:200]}...")
+            
+            # Try alternative extraction
+            try:
+                extracted = _extract_json(response.text)
+                extracted["Platform"] = provider_name
+                extracted["URL"] = url
+                return extracted
+            except:
+                pass
+            
+            # Return error structure
             return {
                 "Platform": provider_name,
                 "URL": url,
-                "Main_Offer": "Analysis failed - JSON parse error",
-                "Primary_CTA": "N/A",
-                "Secondary_CTA": "N/A", 
-                "Headline": "N/A",
-                "Subheadline": "N/A",
-                "Trust_Elements": "N/A",
-                "Visual_Design": "N/A",
-                "Above_Fold_Elements": "N/A",
-                "Pricing_Info": "N/A",
-                "Target_Audience": "N/A",
-                "Unique_Selling_Points": "N/A",
-                "Lead_Generation_Type": "N/A",
-                "Above_Fold_Sections": {},
-                "Below_Fold_Sections": {},
-                "Industry_Specific_Elements": {},
+                "Main_Offer": "JSON Parse Error",
+                "Primary_CTA": "Error",
+                "Secondary_CTA": "Error",
+                "Headline": "Error",
+                "Subheadline": "Error",
+                "Trust_Elements": "Error",
+                "Visual_Design": "Error",
+                "Above_Fold_Elements": "Error",
+                "Pricing_Info": "Error",
+                "Target_Audience": "Error",
+                "Unique_Selling_Points": "Error",
+                "Lead_Generation_Type": "Error",
+                "Above_Fold_Sections": {"Parse_Error": True},
+                "Below_Fold_Sections": {"Parse_Error": True},
                 "error": f"JSON parse error: {str(e)}",
-                "raw_response_snippet": response.text[:200] if response.text else "No response"
+                "response_length": len(response_text)
             }
 
     except Exception as e:
-        flushprint("Gemini multimodal analysis failed:", e)
+        flushprint(f"Gemini API error: {type(e).__name__}: {e}")
         return {
             "Platform": provider_name,
             "URL": url,
-            "Main_Offer": "Analysis failed - API error",
-            "Primary_CTA": "N/A",
-            "Secondary_CTA": "N/A",
-            "Headline": "N/A", 
-            "Subheadline": "N/A",
-            "Trust_Elements": "N/A",
-            "Visual_Design": "N/A",
-            "Above_Fold_Elements": "N/A",
-            "Pricing_Info": "N/A",
-            "Target_Audience": "N/A",
-            "Unique_Selling_Points": "N/A",
-            "Lead_Generation_Type": "N/A",
+            "Main_Offer": f"API Error: {type(e).__name__}",
+            "Primary_CTA": "Error",
+            "Secondary_CTA": "Error",
+            "Headline": "Error",
+            "Subheadline": "Error",
+            "Trust_Elements": "Error",
+            "Visual_Design": "Error",
+            "Above_Fold_Elements": "Error",
+            "Pricing_Info": "Error",
+            "Target_Audience": "Error",
+            "Unique_Selling_Points": "Error",
+            "Lead_Generation_Type": "Error",
             "Above_Fold_Sections": {},
             "Below_Fold_Sections": {},
-            "Industry_Specific_Elements": {},
-            "error": f"Gemini API error: {str(e)}"
+            "error": str(e)
         }
 
 
@@ -632,36 +682,56 @@ def consolidate_sections_across_providers(all_course_data):
     Returns a dictionary with section names and which providers have them
     """
     flushprint("Consolidating sections across all providers")
+    flushprint(f"Processing {len(all_course_data)} providers")
     
     # Collect all unique sections
     all_above_fold_sections = set()
     all_below_fold_sections = set()
-    all_industry_sections = set()
     
-    for provider_data in all_course_data:
+    for i, provider_data in enumerate(all_course_data):
+        flushprint(f"Processing provider {i+1}: {provider_data.get('Platform', 'Unknown')}")
+        
         if 'error' in provider_data:
+            flushprint(f"  Skipping due to error: {provider_data['error']}")
             continue
             
         # Collect above fold sections
-        if 'Above_Fold_Sections' in provider_data and isinstance(provider_data['Above_Fold_Sections'], dict):
-            all_above_fold_sections.update(provider_data['Above_Fold_Sections'].keys())
+        above_fold = provider_data.get('Above_Fold_Sections', {})
+        if isinstance(above_fold, dict):
+            all_above_fold_sections.update(above_fold.keys())
+            flushprint(f"  Found {len(above_fold)} above-fold sections")
+        else:
+            flushprint(f"  Warning: Above_Fold_Sections is not a dict: {type(above_fold)}")
         
         # Collect below fold sections
-        if 'Below_Fold_Sections' in provider_data and isinstance(provider_data['Below_Fold_Sections'], dict):
-            all_below_fold_sections.update(provider_data['Below_Fold_Sections'].keys())
-            
-        # Collect industry specific elements
-        if 'Industry_Specific_Elements' in provider_data and isinstance(provider_data['Industry_Specific_Elements'], dict):
-            all_industry_sections.update(provider_data['Industry_Specific_Elements'].keys())
+        below_fold = provider_data.get('Below_Fold_Sections', {})
+        if isinstance(below_fold, dict):
+            all_below_fold_sections.update(below_fold.keys())
+            flushprint(f"  Found {len(below_fold)} below-fold sections")
+        else:
+            flushprint(f"  Warning: Below_Fold_Sections is not a dict: {type(below_fold)}")
     
-    flushprint(f"Found {len(all_above_fold_sections)} above-fold sections")
-    flushprint(f"Found {len(all_below_fold_sections)} below-fold sections")
-    flushprint(f"Found {len(all_industry_sections)} industry-specific sections")
+    flushprint(f"Total unique above-fold sections: {len(all_above_fold_sections)}")
+    flushprint(f"Total unique below-fold sections: {len(all_below_fold_sections)}")
+    
+    # If no sections found, add default sections
+    if not all_above_fold_sections:
+        all_above_fold_sections = {
+            "Hero_Section", "Navigation_Bar", "Value_Proposition", 
+            "CTA_Buttons", "Trust_Indicators", "Feature_Highlights"
+        }
+        flushprint("No above-fold sections found, using defaults")
+    
+    if not all_below_fold_sections:
+        all_below_fold_sections = {
+            "Features_Section", "Testimonials", "Pricing", 
+            "FAQ", "Footer", "Contact_Info"
+        }
+        flushprint("No below-fold sections found, using defaults")
     
     return {
         'above_fold': sorted(list(all_above_fold_sections)),
-        'below_fold': sorted(list(all_below_fold_sections)),
-        'industry_specific': sorted(list(all_industry_sections))
+        'below_fold': sorted(list(all_below_fold_sections))
     }
 
 
@@ -672,73 +742,79 @@ def create_section_comparison_dataframe(all_course_data):
     """
     flushprint("Creating section comparison dataframe")
     
+    # Filter out error entries for column headers
+    valid_providers = [p for p in all_course_data if 'error' not in p]
+    
+    if not valid_providers:
+        flushprint("No valid providers found!")
+        return pd.DataFrame({"Section": ["No valid data collected"], "Status": ["Error"]})
+    
     # Get all unique sections
     sections = consolidate_sections_across_providers(all_course_data)
     
     # Create comparison data
     comparison_data = []
     
-    # Add header row for section types
-    comparison_data.append({
-        'Section': '=== ABOVE THE FOLD ===',
-        **{provider['Platform']: '' for provider in all_course_data if 'error' not in provider}
-    })
+    # Create header row
+    header_row = {'Section': 'Platform'}
+    for provider in valid_providers:
+        header_row[provider['Platform']] = provider['Platform']
+    comparison_data.append(header_row)
+    
+    # Add URL row
+    url_row = {'Section': 'URL'}
+    for provider in valid_providers:
+        url_row[provider['Platform']] = provider.get('URL', 'N/A')
+    comparison_data.append(url_row)
+    
+    # Add separator for above fold
+    separator_row = {'Section': '=== ABOVE THE FOLD ==='}
+    for provider in valid_providers:
+        separator_row[provider['Platform']] = ''
+    comparison_data.append(separator_row)
     
     # Add above fold sections
     for section in sections['above_fold']:
         row = {'Section': section}
         for provider in all_course_data:
             if 'error' in provider:
-                row[provider['Platform']] = '❌'
-            else:
+                continue
+            provider_name = provider['Platform']
+            if provider_name in [p['Platform'] for p in valid_providers]:
                 above_fold = provider.get('Above_Fold_Sections', {})
-                if isinstance(above_fold, dict):
-                    row[provider['Platform']] = '✅' if above_fold.get(section, False) else '❌'
+                if isinstance(above_fold, dict) and section in above_fold:
+                    row[provider_name] = '✅' if above_fold[section] else '❌'
                 else:
-                    row[provider['Platform']] = '❌'
+                    row[provider_name] = '❌'
         comparison_data.append(row)
     
-    # Add separator
-    comparison_data.append({
-        'Section': '=== BELOW THE FOLD ===',
-        **{provider['Platform']: '' for provider in all_course_data if 'error' not in provider}
-    })
+    # Add separator for below fold
+    separator_row2 = {'Section': '=== BELOW THE FOLD ==='}
+    for provider in valid_providers:
+        separator_row2[provider['Platform']] = ''
+    comparison_data.append(separator_row2)
     
     # Add below fold sections
     for section in sections['below_fold']:
         row = {'Section': section}
         for provider in all_course_data:
             if 'error' in provider:
-                row[provider['Platform']] = '❌'
-            else:
+                continue
+            provider_name = provider['Platform']
+            if provider_name in [p['Platform'] for p in valid_providers]:
                 below_fold = provider.get('Below_Fold_Sections', {})
-                if isinstance(below_fold, dict):
-                    row[provider['Platform']] = '✅' if below_fold.get(section, False) else '❌'
+                if isinstance(below_fold, dict) and section in below_fold:
+                    row[provider_name] = '✅' if below_fold[section] else '❌'
                 else:
-                    row[provider['Platform']] = '❌'
+                    row[provider_name] = '❌'
         comparison_data.append(row)
     
-    # Add industry specific if any
-    if sections['industry_specific']:
-        comparison_data.append({
-            'Section': '=== INDUSTRY SPECIFIC ===',
-            **{provider['Platform']: '' for provider in all_course_data if 'error' not in provider}
-        })
-        
-        for section in sections['industry_specific']:
-            row = {'Section': section}
-            for provider in all_course_data:
-                if 'error' in provider:
-                    row[provider['Platform']] = '❌'
-                else:
-                    industry_specific = provider.get('Industry_Specific_Elements', {})
-                    if isinstance(industry_specific, dict):
-                        row[provider['Platform']] = '✅' if industry_specific.get(section, False) else '❌'
-                    else:
-                        row[provider['Platform']] = '❌'
-            comparison_data.append(row)
+    # Create DataFrame
+    df = pd.DataFrame(comparison_data)
     
-    return pd.DataFrame(comparison_data)
+    flushprint(f"Section comparison table created with {len(df)} rows and {len(df.columns)} columns")
+    
+    return df
 
 
 # -- Main analyzer function --
@@ -1132,6 +1208,94 @@ def download_sections():
         return "No section comparison file available. Please run an analysis first.", 404
     return send_file(path, as_attachment=True, download_name="section_comparison_table.csv")
 
+# Add this route to your app.py file after the other routes
+
+@app.route('/debug/last-analysis')
+def debug_last_analysis():
+    """Debug route to see the structure of the last analysis"""
+    try:
+        session_id = app.config.get('LAST_SESSION_ID')
+        if not session_id:
+            return jsonify({"error": "No analysis has been run yet"}), 404
+        
+        # Get the CSV data
+        csv_result = get_analysis_result_from_db(session_id, 'csv')
+        if not csv_result:
+            return jsonify({"error": "No CSV data found"}), 404
+        
+        # Parse the CSV content
+        import io
+        import pandas as pd
+        df = pd.read_csv(io.StringIO(csv_result['content']))
+        
+        # Get section comparison
+        section_result = get_analysis_result_from_db(session_id, 'section_comparison')
+        section_df = None
+        if section_result:
+            section_df = pd.read_csv(io.StringIO(section_result['content']))
+        
+        # Analyze the data structure
+        debug_info = {
+            "session_id": session_id,
+            "total_providers": len(df),
+            "columns_found": list(df.columns),
+            "providers": list(df['Platform'].values) if 'Platform' in df.columns else [],
+        }
+        
+        # Check each provider's data
+        provider_details = []
+        for idx, row in df.iterrows():
+            provider_info = {
+                "platform": row.get('Platform', 'Unknown'),
+                "url": row.get('URL', 'Unknown'),
+                "has_above_fold_sections": False,
+                "has_below_fold_sections": False,
+                "above_fold_sections": {},
+                "below_fold_sections": {},
+                "all_columns": {}
+            }
+            
+            # Check for section columns
+            if 'Above_Fold_Sections' in row:
+                try:
+                    sections = json.loads(row['Above_Fold_Sections']) if isinstance(row['Above_Fold_Sections'], str) else row['Above_Fold_Sections']
+                    if isinstance(sections, dict):
+                        provider_info['has_above_fold_sections'] = True
+                        provider_info['above_fold_sections'] = sections
+                except:
+                    provider_info['above_fold_sections'] = str(row['Above_Fold_Sections'])
+            
+            if 'Below_Fold_Sections' in row:
+                try:
+                    sections = json.loads(row['Below_Fold_Sections']) if isinstance(row['Below_Fold_Sections'], str) else row['Below_Fold_Sections']
+                    if isinstance(sections, dict):
+                        provider_info['has_below_fold_sections'] = True
+                        provider_info['below_fold_sections'] = sections
+                except:
+                    provider_info['below_fold_sections'] = str(row['Below_Fold_Sections'])
+            
+            # Add all column values for debugging
+            for col in df.columns:
+                provider_info['all_columns'][col] = str(row[col])[:100]  # Limit to 100 chars
+            
+            provider_details.append(provider_info)
+        
+        debug_info['provider_details'] = provider_details
+        
+        # Add section comparison info
+        if section_df is not None:
+            debug_info['section_comparison'] = {
+                "rows": len(section_df),
+                "columns": list(section_df.columns),
+                "sections_found": list(section_df['Section'].values) if 'Section' in section_df.columns else []
+            }
+        else:
+            debug_info['section_comparison'] = "No section comparison found"
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({"error": f"Debug failed: {str(e)}"}), 500
 
 @app.route('/download/report')
 def download_report():
