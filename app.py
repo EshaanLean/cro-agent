@@ -19,15 +19,23 @@ def get_db_conn():
     if not db_url:
         raise Exception("DATABASE_URL not set!")
 
-    # Replace invalid ssl=true with a valid sslmode for Render PostgreSQL
+    # For Render PostgreSQL, ensure SSL mode is set correctly using URL parsing
     if "render.com" in db_url or "dpg-" in db_url:
-        db_url = db_url.replace("ssl=true", "sslmode=require", 1)
+        # Parse the URL into its components
+        parts = urllib.parse.urlparse(db_url)
+        # Parse the query string into a dictionary
+        query_params = urllib.parse.parse_qs(parts.query)
 
-    # Ensure sslmode is present if the replacement didn't happen
-    if "render.com" in db_url or "dpg-" in db_url:
-        if "sslmode=" not in db_url:
-            separator = "&" if "?" in db_url else "?"
-            db_url = f"{db_url}{separator}sslmode=require"
+        # Remove the incorrect 'ssl' parameter if it exists from a previous config
+        query_params.pop('ssl', None)
+
+        # Set the correct 'sslmode' parameter
+        query_params['sslmode'] = ['require'] # parse_qs expects values in a list
+
+        # Rebuild the query string and then the full URL
+        new_query = urllib.parse.urlencode(query_params, doseq=True)
+        parts = parts._replace(query=new_query)
+        db_url = urllib.parse.urlunparse(parts)
 
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
