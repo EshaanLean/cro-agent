@@ -18,13 +18,17 @@ def get_db_conn():
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         raise Exception("DATABASE_URL not set!")
-    
-    # For Render PostgreSQL, ensure SSL mode is set
+
+    # Replace invalid ssl=true with a valid sslmode for Render PostgreSQL
+    if "render.com" in db_url or "dpg-" in db_url:
+        db_url = db_url.replace("ssl=true", "sslmode=require", 1)
+
+    # Ensure sslmode is present if the replacement didn't happen
     if "render.com" in db_url or "dpg-" in db_url:
         if "sslmode=" not in db_url:
             separator = "&" if "?" in db_url else "?"
-            db_url = f"{db_url}{separator}sslmode=prefer"
-    
+            db_url = f"{db_url}{separator}sslmode=require"
+
     return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
 
 def init_database():
