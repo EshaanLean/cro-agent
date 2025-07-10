@@ -46,6 +46,58 @@ def init_database():
         try:
             with conn:
                 with conn.cursor() as cur:
+                    # First, check if tables exist and their structure
+                    cur.execute("""
+                        SELECT column_name, data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'analysis_results'
+                        ORDER BY ordinal_position;
+                    """)
+                    existing_columns = cur.fetchall()
+                    
+                    if existing_columns:
+                        print("Existing analysis_results columns:")
+                        for col in existing_columns:
+                            print(f"  - {col['column_name']}: {col['data_type']}")
+                        
+                        # Check if we need to add missing columns
+                        existing_col_names = [col['column_name'] for col in existing_columns]
+                        
+                        if 'file_type' not in existing_col_names:
+                            print("Adding missing column: file_type")
+                            cur.execute("ALTER TABLE analysis_results ADD COLUMN file_type VARCHAR(50);")
+                        
+                        if 'file_name' not in existing_col_names:
+                            print("Adding missing column: file_name")
+                            cur.execute("ALTER TABLE analysis_results ADD COLUMN file_name VARCHAR(255);")
+                        
+                        if 'content' not in existing_col_names:
+                            print("Adding missing column: content")
+                            cur.execute("ALTER TABLE analysis_results ADD COLUMN content TEXT;")
+                        
+                        if 'file_data' not in existing_col_names:
+                            print("Adding missing column: file_data")
+                            cur.execute("ALTER TABLE analysis_results ADD COLUMN file_data BYTEA;")
+                        
+                        if 'client_name' not in existing_col_names:
+                            print("Adding missing column: client_name")
+                            cur.execute("ALTER TABLE analysis_results ADD COLUMN client_name VARCHAR(255);")
+                    else:
+                        # Create the table if it doesn't exist
+                        print("Creating analysis_results table")
+                        cur.execute("""
+                            CREATE TABLE IF NOT EXISTS analysis_results (
+                                id SERIAL PRIMARY KEY,
+                                session_id VARCHAR(255) NOT NULL,
+                                file_type VARCHAR(50) NOT NULL,
+                                file_name VARCHAR(255) NOT NULL,
+                                content TEXT,
+                                file_data BYTEA,
+                                client_name VARCHAR(255),
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                            )
+                        """)
+                    
                     # Create screenshots table
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS screenshots (
@@ -53,20 +105,6 @@ def init_database():
                             name VARCHAR(255) NOT NULL,
                             url TEXT,
                             image BYTEA,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )
-                    """)
-                    
-                    # Create analysis_results table for CSV and reports
-                    cur.execute("""
-                        CREATE TABLE IF NOT EXISTS analysis_results (
-                            id SERIAL PRIMARY KEY,
-                            session_id VARCHAR(255) NOT NULL,
-                            file_type VARCHAR(50) NOT NULL,
-                            file_name VARCHAR(255) NOT NULL,
-                            content TEXT,
-                            file_data BYTEA,
-                            client_name VARCHAR(255),
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
@@ -180,20 +218,59 @@ def save_screenshot_to_db(name, url, image_bytes):
         # Don't raise - continue without DB save
 
 def save_analysis_result_to_db(session_id, file_type, file_name, content=None, file_data=None, client_name=None):
-    """Save analysis results (CSV, reports) to database"""
+    """Save analysis results (CSV, reports) to database with error handling for missing columns"""
     try:
         conn = get_db_conn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """INSERT INTO analysis_results 
-                           (session_id, file_type, file_name, content, file_data, client_name) 
-                           VALUES (%s, %s, %s, %s, %s, %s)""",
-                        (session_id, file_type, file_name, content, 
-                         psycopg2.Binary(file_data) if file_data else None, client_name)
-                    )
-            print(f"Saved {file_type} to database: {file_name}")
+                    # First, check what columns exist
+                    cur.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'analysis_results'
+                    """)
+                    existing_columns = [row['column_name'] for row in cur.fetchall()]
+                    
+                    # Build insert query based on available columns
+                    columns = ['session_id']  # Always required
+                    values = [session_id]
+                    placeholders = ['%s']
+                    
+                    # Add optional columns if they exist
+                    if 'file_type' in existing_columns:
+                        columns.append('file_type')
+                        values.append(file_type)
+                        placeholders.append('%s')
+                    
+                    if 'file_name' in existing_columns:
+                        columns.append('file_name')
+                        values.append(file_name)
+                        placeholders.append('%s')
+                    
+                    if 'content' in existing_columns and content is not None:
+                        columns.append('content')
+                        values.append(content)
+                        placeholders.append('%s')
+                    
+                    if 'file_data' in existing_columns and file_data is not None:
+                        columns.append('file_data')
+                        values.append(psycopg2.Binary(file_data))
+                        placeholders.append('%s')
+                    
+                    if 'client_name' in existing_columns and client_name is not None:
+                        columns.append('client_name')
+                        values.append(client_name)
+                        placeholders.append('%s')
+                    
+                    # Build and execute the query
+                    query = f"""
+                        INSERT INTO analysis_results ({', '.join(columns)}) 
+                        VALUES ({', '.join(placeholders)})
+                    """
+                    
+                    cur.execute(query, values)
+                    print(f"Saved {file_type} to database: {file_name}")
         finally:
             conn.close()
     except Exception as e:
@@ -228,19 +305,64 @@ def get_screenshot_from_db(name, url=None):
         return None
 
 def get_analysis_result_from_db(session_id, file_type):
-    """Retrieve analysis results from database"""
+    """Retrieve analysis results from database with error handling for missing columns"""
     try:
         conn = get_db_conn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT file_name, content, file_data FROM analysis_results WHERE session_id=%s AND file_type=%s ORDER BY created_at DESC LIMIT 1",
-                        (session_id, file_type)
-                    )
+                    # First, check what columns exist
+                    cur.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'analysis_results'
+                    """)
+                    existing_columns = [row['column_name'] for row in cur.fetchall()]
+                    
+                    # Build query based on available columns
+                    select_columns = []
+                    if 'file_name' in existing_columns:
+                        select_columns.append('file_name')
+                    if 'content' in existing_columns:
+                        select_columns.append('content')
+                    if 'file_data' in existing_columns:
+                        select_columns.append('file_data')
+                    
+                    if not select_columns:
+                        print("Warning: No expected columns found in analysis_results table")
+                        return None
+                    
+                    # Build the query
+                    query = f"SELECT {', '.join(select_columns)} FROM analysis_results WHERE session_id=%s"
+                    
+                    # Add file_type condition only if column exists
+                    if 'file_type' in existing_columns:
+                        query += " AND file_type=%s ORDER BY created_at DESC LIMIT 1"
+                        cur.execute(query, (session_id, file_type))
+                    else:
+                        query += " ORDER BY created_at DESC LIMIT 1"
+                        cur.execute(query, (session_id,))
+                    
                     row = cur.fetchone()
                     if row:
-                        return row
+                        # Build result dictionary with available data
+                        result = {}
+                        if 'file_name' in select_columns:
+                            result['file_name'] = row.get('file_name', f'{file_type}.csv')
+                        else:
+                            result['file_name'] = f'{file_type}.csv'  # Default name
+                            
+                        if 'content' in select_columns:
+                            result['content'] = row.get('content', '')
+                        else:
+                            result['content'] = ''
+                            
+                        if 'file_data' in select_columns:
+                            result['file_data'] = row.get('file_data', b'')
+                        else:
+                            result['file_data'] = b''
+                        
+                        return result
                     else:
                         return None
         finally:
@@ -338,8 +460,10 @@ HTML = """
     <h4>🔍 Debug & Database Status</h4>
     <a href="/test-db" class="debug-btn" target="_blank">Test DB Connection</a>
     <a href="/check-env" class="debug-btn" target="_blank">Check Environment</a>
+    <a href="/migrate-db" class="debug-btn" target="_blank">Migrate Database</a>
     <a href="/screenshots" class="debug-btn" target="_blank">View Screenshots DB</a>
     <a href="/analysis_results" class="debug-btn" target="_blank">View Analysis Results DB</a>
+    <a href="/debug/last-analysis" class="debug-btn" target="_blank">Debug Last Analysis</a>
     <p><small>Check these links to diagnose connection issues and see stored data</small></p>
   </div>
 
@@ -439,7 +563,6 @@ function showLoading() {
 </html>
 """
 
-
 def save_manual_screenshots(files):
     uploaded_names = []
     flushprint("save_manual_screenshots called")
@@ -464,11 +587,10 @@ def extract_site_name(url):
         flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
 
-
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, all_providers=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         pil_img = _prepare_image(Image.open(io.BytesIO(image_bytes)))
 
         # Text content section
@@ -817,196 +939,6 @@ def create_section_comparison_dataframe(all_course_data):
     return df
 
 
-# -- Main analyzer function --
-def analyze_landing_pages(landing_pages, prompt_override=None):
-    flushprint("analyze_landing_pages called")
-    all_course_data = []
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_id = f"session_{timestamp}"
-    session_dir = os.path.join(app.config['OUTPUT_FOLDER'], f"analysis_{timestamp}")
-    os.makedirs(session_dir, exist_ok=True)
-    
-    client_name = None
-    
-    # Identify client
-    for lp in landing_pages:
-        if lp.get('type') == 'client':
-            client_name = lp['name']
-            break
-    
-    if not client_name:
-        client_name = landing_pages[0]['name'] if landing_pages else "Unknown"
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36'
-            )
-
-            for lp in landing_pages:
-                flushprint(f"Processing {lp['name']} ({lp['url']}) type={lp.get('type')} manual={lp.get('manual')}")
-                
-                if lp.get("manual", False) or lp.get('type') == 'manual':
-                    # MANUAL SCREENSHOT PROCESSING
-                    manual_file = f"{lp['name']}_manual.png"
-                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
-                    
-                    if not os.path.exists(manual_path):
-                        flushprint(f"Manual screenshot not found: {manual_file}")
-                        all_course_data.append({
-                            "Platform": lp['name'], 
-                            "URL": lp['url'],
-                            "Type": lp.get('type', 'unknown'),
-                            "error": f"Manual screenshot '{manual_file}' not found."
-                        })
-                        continue
-                    
-                    try:
-                        with open(manual_path, "rb") as f:
-                            image_bytes = f.read()
-                        
-                        # Save screenshot to database
-                        save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
-                        
-                        page_content = ""
-                        # UPDATED: Pass landing_pages as the last parameter for context
-                        structured_data = get_multimodal_analysis_from_gemini(
-                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
-                        )
-                        structured_data['Type'] = lp.get('type', 'manual')
-                        all_course_data.append(structured_data)
-                        flushprint(f"Manual analysis completed for {lp['name']}")
-                    except Exception as e:
-                        flushprint(f"Error processing manual screenshot for {lp['name']}: {e}")
-                        all_course_data.append({
-                            "Platform": lp['name'], 
-                            "URL": lp['url'],
-                            "Type": lp.get('type', 'unknown'),
-                            "error": f"Manual processing error: {str(e)}"
-                        })
-                else:
-                    # AUTOMATIC SCREENSHOT PROCESSING
-                    page = context.new_page()
-                    try:
-                        flushprint(f"Navigating to {lp['url']}")
-                        page.goto(lp["url"], wait_until="domcontentloaded", timeout=60000)
-                        page.wait_for_timeout(5000)
-                        
-                        screenshot_path = os.path.join(session_dir, f"{lp['name']}_fullpage.png")
-                        page.screenshot(path=screenshot_path, full_page=True)
-                        
-                        with open(screenshot_path, "rb") as f:
-                            image_bytes = f.read()
-                        
-                        # Save screenshot to database
-                        save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
-                        
-                        page_content = page.inner_text('body')
-                        # UPDATED: Pass landing_pages as the last parameter for context
-                        structured_data = get_multimodal_analysis_from_gemini(
-                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
-                        )
-                        structured_data['Type'] = lp.get('type', 'competitor')
-                        all_course_data.append(structured_data)
-                        flushprint(f"Automatic analysis completed for {lp['name']}")
-                        
-                    except PlaywrightTimeoutError:
-                        flushprint(f"Timeout error for {lp['name']}")
-                        all_course_data.append({
-                            "Platform": lp['name'], 
-                            "URL": lp['url'],
-                            "Type": lp.get('type', 'unknown'),
-                            "error": "Page load timeout"
-                        })
-                    except Exception as e:
-                        flushprint(f"Error for auto processing {lp['name']}: {e}")
-                        all_course_data.append({
-                            "Platform": lp['name'], 
-                            "URL": lp['url'],
-                            "Type": lp.get('type', 'unknown'),
-                            "error": f"Auto processing error: {str(e)}"
-                        })
-                    finally:
-                        page.close()
-                        
-            browser.close()
-            flushprint("Browser closed")
-            
-    except Exception as e:
-        flushprint("Fatal error in analyze_landing_pages:", e)
-        all_course_data.append({
-            "Platform": "SYSTEM_ERROR",
-            "URL": "N/A",
-            "Type": "error", 
-            "error": f"Fatal error: {str(e)}"
-        })
-
-    if not all_course_data:
-        all_course_data.append({
-            "Platform": "NO_DATA",
-            "URL": "N/A",
-            "Type": "error",
-            "error": "No data was collected"
-        })
-
-    # Save main analysis CSV (local and database)
-    df = pd.DataFrame(all_course_data)
-    csv_path = os.path.join(session_dir, "competitive_analysis_data.csv")
-    df.to_csv(csv_path, index=False)
-    flushprint(f"CSV saved locally with {len(all_course_data)} records")
-    
-    # Save CSV to database
-    with open(csv_path, 'rb') as f:
-        csv_bytes = f.read()
-    save_analysis_result_to_db(session_id, 'csv', 'competitive_analysis_data.csv', 
-                               content=df.to_csv(index=False), file_data=csv_bytes, client_name=client_name)
-    
-    # NEW: Create section comparison table
-    section_comparison_df = create_section_comparison_dataframe(all_course_data)
-    section_csv_path = os.path.join(session_dir, "section_comparison_table.csv")
-    section_comparison_df.to_csv(section_csv_path, index=False)
-    flushprint(f"Section comparison table saved to {section_csv_path}")
-    
-    # NEW: Save section comparison to database
-    with open(section_csv_path, 'rb') as f:
-        section_csv_bytes = f.read()
-    save_analysis_result_to_db(session_id, 'section_comparison', 'section_comparison_table.csv',
-                               content=section_comparison_df.to_csv(index=False), 
-                               file_data=section_csv_bytes, client_name=client_name)
-    
-    # NEW: Store path for downloads
-    app.config['LAST_SECTION_CSV_PATH'] = section_csv_path
-    
-    # Generate summary report
-    successful_df = df[df['error'].isnull()].copy() if 'error' in df.columns else df
-    
-    if not successful_df.empty:
-        # UPDATED: Pass section_comparison_df to generate_summary_report
-        summary_report = generate_summary_report(successful_df, client_name, section_comparison_df)
-        report_path = os.path.join(session_dir, "summary_and_recommendations.md")
-        with open(report_path, "w", encoding='utf-8') as f:
-            f.write(summary_report)
-        flushprint(f"Summary report saved locally to {report_path}")
-        
-        # Save report to database
-        with open(report_path, 'rb') as f:
-            report_bytes = f.read()
-        save_analysis_result_to_db(session_id, 'report', 'summary_and_recommendations.md', 
-                                   content=summary_report, file_data=report_bytes, client_name=client_name)
-    else:
-        summary_report = "No successful data collection for report generation."
-    
-    # Store session info for downloads
-    app.config['LAST_SESSION_ID'] = session_id
-    app.config['LAST_CSV_PATH'] = csv_path
-    app.config['LAST_REPORT_PATH'] = report_path if 'report_path' in locals() else None
-    app.config['LAST_SESSION_DIR'] = session_dir
-    
-    return summary_report, csv_path
-
-
 def generate_summary_report(course_data_df: pd.DataFrame, client_name: str, section_comparison_df: pd.DataFrame = None) -> str:
     flushprint(f"Generating summary report with client: {client_name}")
     try:
@@ -1014,7 +946,7 @@ def generate_summary_report(course_data_df: pd.DataFrame, client_name: str, sect
         
         data_string = course_data_df.to_csv(index=False)
         
-        # NEW: Include section comparison if available
+        # Include section comparison if available
         section_comparison_string = ""
         if section_comparison_df is not None:
             section_comparison_string = f"""
@@ -1083,7 +1015,195 @@ def generate_summary_report(course_data_df: pd.DataFrame, client_name: str, sect
     except Exception as e:
         flushprint(f"Failed to generate summary report: {e}")
         return f"Error generating summary report: {str(e)}"
+
+# -- Main analyzer function --
+def analyze_landing_pages(landing_pages, prompt_override=None):
+    flushprint("analyze_landing_pages called")
+    all_course_data = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_id = f"session_{timestamp}"
+    session_dir = os.path.join(app.config['OUTPUT_FOLDER'], f"analysis_{timestamp}")
+    os.makedirs(session_dir, exist_ok=True)
     
+    client_name = None
+    
+    # Identify client
+    for lp in landing_pages:
+        if lp.get('type') == 'client':
+            client_name = lp['name']
+            break
+    
+    if not client_name:
+        client_name = landing_pages[0]['name'] if landing_pages else "Unknown"
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36'
+            )
+
+            for lp in landing_pages:
+                flushprint(f"Processing {lp['name']} ({lp['url']}) type={lp.get('type')} manual={lp.get('manual')}")
+                
+                if lp.get("manual", False) or lp.get('type') == 'manual':
+                    # MANUAL SCREENSHOT PROCESSING
+                    manual_file = f"{lp['name']}_manual.png"
+                    manual_path = os.path.join(app.config['UPLOAD_FOLDER'], manual_file)
+                    
+                    if not os.path.exists(manual_path):
+                        flushprint(f"Manual screenshot not found: {manual_file}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "Type": lp.get('type', 'unknown'),
+                            "error": f"Manual screenshot '{manual_file}' not found."
+                        })
+                        continue
+                    
+                    try:
+                        with open(manual_path, "rb") as f:
+                            image_bytes = f.read()
+                        
+                        # Save screenshot to database
+                        save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
+                        
+                        page_content = ""
+                        # Pass landing_pages as the last parameter for context
+                        structured_data = get_multimodal_analysis_from_gemini(
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
+                        )
+                        structured_data['Type'] = lp.get('type', 'manual')
+                        all_course_data.append(structured_data)
+                        flushprint(f"Manual analysis completed for {lp['name']}")
+                    except Exception as e:
+                        flushprint(f"Error processing manual screenshot for {lp['name']}: {e}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "Type": lp.get('type', 'unknown'),
+                            "error": f"Manual processing error: {str(e)}"
+                        })
+                else:
+                    # AUTOMATIC SCREENSHOT PROCESSING
+                    page = context.new_page()
+                    try:
+                        flushprint(f"Navigating to {lp['url']}")
+                        page.goto(lp["url"], wait_until="domcontentloaded", timeout=60000)
+                        page.wait_for_timeout(5000)
+                        
+                        screenshot_path = os.path.join(session_dir, f"{lp['name']}_fullpage.png")
+                        page.screenshot(path=screenshot_path, full_page=True)
+                        
+                        with open(screenshot_path, "rb") as f:
+                            image_bytes = f.read()
+                        
+                        # Save screenshot to database
+                        save_screenshot_to_db(lp['name'], lp['url'], image_bytes)
+                        
+                        page_content = page.inner_text('body')
+                        # Pass landing_pages as the last parameter for context
+                        structured_data = get_multimodal_analysis_from_gemini(
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
+                        )
+                        structured_data['Type'] = lp.get('type', 'competitor')
+                        all_course_data.append(structured_data)
+                        flushprint(f"Automatic analysis completed for {lp['name']}")
+                        
+                    except PlaywrightTimeoutError:
+                        flushprint(f"Timeout error for {lp['name']}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "Type": lp.get('type', 'unknown'),
+                            "error": "Page load timeout"
+                        })
+                    except Exception as e:
+                        flushprint(f"Error for auto processing {lp['name']}: {e}")
+                        all_course_data.append({
+                            "Platform": lp['name'], 
+                            "URL": lp['url'],
+                            "Type": lp.get('type', 'unknown'),
+                            "error": f"Auto processing error: {str(e)}"
+                        })
+                    finally:
+                        page.close()
+                        
+            browser.close()
+            flushprint("Browser closed")
+            
+    except Exception as e:
+        flushprint("Fatal error in analyze_landing_pages:", e)
+        all_course_data.append({
+            "Platform": "SYSTEM_ERROR",
+            "URL": "N/A",
+            "Type": "error", 
+            "error": f"Fatal error: {str(e)}"
+        })
+
+    if not all_course_data:
+        all_course_data.append({
+            "Platform": "NO_DATA",
+            "URL": "N/A",
+            "Type": "error",
+            "error": "No data was collected"
+        })
+
+    # Save main analysis CSV (local and database)
+    df = pd.DataFrame(all_course_data)
+    csv_path = os.path.join(session_dir, "competitive_analysis_data.csv")
+    df.to_csv(csv_path, index=False)
+    flushprint(f"CSV saved locally with {len(all_course_data)} records")
+    
+    # Save CSV to database
+    with open(csv_path, 'rb') as f:
+        csv_bytes = f.read()
+    save_analysis_result_to_db(session_id, 'csv', 'competitive_analysis_data.csv', 
+                               content=df.to_csv(index=False), file_data=csv_bytes, client_name=client_name)
+    
+    # Create section comparison table
+    section_comparison_df = create_section_comparison_dataframe(all_course_data)
+    section_csv_path = os.path.join(session_dir, "section_comparison_table.csv")
+    section_comparison_df.to_csv(section_csv_path, index=False)
+    flushprint(f"Section comparison table saved to {section_csv_path}")
+    
+    # Save section comparison to database
+    with open(section_csv_path, 'rb') as f:
+        section_csv_bytes = f.read()
+    save_analysis_result_to_db(session_id, 'section_comparison', 'section_comparison_table.csv',
+                               content=section_comparison_df.to_csv(index=False), 
+                               file_data=section_csv_bytes, client_name=client_name)
+    
+    # Store path for downloads
+    app.config['LAST_SECTION_CSV_PATH'] = section_csv_path
+    
+    # Generate summary report
+    successful_df = df[df['error'].isnull()].copy() if 'error' in df.columns else df
+    
+    if not successful_df.empty:
+        # Pass section_comparison_df to generate_summary_report
+        summary_report = generate_summary_report(successful_df, client_name, section_comparison_df)
+        report_path = os.path.join(session_dir, "summary_and_recommendations.md")
+        with open(report_path, "w", encoding='utf-8') as f:
+            f.write(summary_report)
+        flushprint(f"Summary report saved locally to {report_path}")
+        
+        # Save report to database
+        with open(report_path, 'rb') as f:
+            report_bytes = f.read()
+        save_analysis_result_to_db(session_id, 'report', 'summary_and_recommendations.md', 
+                                   content=summary_report, file_data=report_bytes, client_name=client_name)
+    else:
+        summary_report = "No successful data collection for report generation."
+    
+    # Store session info for downloads
+    app.config['LAST_SESSION_ID'] = session_id
+    app.config['LAST_CSV_PATH'] = csv_path
+    app.config['LAST_REPORT_PATH'] = report_path if 'report_path' in locals() else None
+    app.config['LAST_SESSION_DIR'] = session_dir
+    
+    return summary_report, csv_path
 
 # --- Routes ---
 @app.route("/", methods=["GET", "POST"])
@@ -1185,7 +1305,6 @@ def download_csv():
         return "No CSV file available. Please run an analysis first.", 404
     return send_file(path, as_attachment=True, download_name="competitive_analysis_data.csv")
 
-# ADD THIS NEW ROUTE HERE (Step 5):
 @app.route('/download/sections')
 def download_sections():
     flushprint("Download section comparison requested")
@@ -1207,95 +1326,6 @@ def download_sections():
     if not path or not os.path.exists(path):
         return "No section comparison file available. Please run an analysis first.", 404
     return send_file(path, as_attachment=True, download_name="section_comparison_table.csv")
-
-# Add this route to your app.py file after the other routes
-
-@app.route('/debug/last-analysis')
-def debug_last_analysis():
-    """Debug route to see the structure of the last analysis"""
-    try:
-        session_id = app.config.get('LAST_SESSION_ID')
-        if not session_id:
-            return jsonify({"error": "No analysis has been run yet"}), 404
-        
-        # Get the CSV data
-        csv_result = get_analysis_result_from_db(session_id, 'csv')
-        if not csv_result:
-            return jsonify({"error": "No CSV data found"}), 404
-        
-        # Parse the CSV content
-        import io
-        import pandas as pd
-        df = pd.read_csv(io.StringIO(csv_result['content']))
-        
-        # Get section comparison
-        section_result = get_analysis_result_from_db(session_id, 'section_comparison')
-        section_df = None
-        if section_result:
-            section_df = pd.read_csv(io.StringIO(section_result['content']))
-        
-        # Analyze the data structure
-        debug_info = {
-            "session_id": session_id,
-            "total_providers": len(df),
-            "columns_found": list(df.columns),
-            "providers": list(df['Platform'].values) if 'Platform' in df.columns else [],
-        }
-        
-        # Check each provider's data
-        provider_details = []
-        for idx, row in df.iterrows():
-            provider_info = {
-                "platform": row.get('Platform', 'Unknown'),
-                "url": row.get('URL', 'Unknown'),
-                "has_above_fold_sections": False,
-                "has_below_fold_sections": False,
-                "above_fold_sections": {},
-                "below_fold_sections": {},
-                "all_columns": {}
-            }
-            
-            # Check for section columns
-            if 'Above_Fold_Sections' in row:
-                try:
-                    sections = json.loads(row['Above_Fold_Sections']) if isinstance(row['Above_Fold_Sections'], str) else row['Above_Fold_Sections']
-                    if isinstance(sections, dict):
-                        provider_info['has_above_fold_sections'] = True
-                        provider_info['above_fold_sections'] = sections
-                except:
-                    provider_info['above_fold_sections'] = str(row['Above_Fold_Sections'])
-            
-            if 'Below_Fold_Sections' in row:
-                try:
-                    sections = json.loads(row['Below_Fold_Sections']) if isinstance(row['Below_Fold_Sections'], str) else row['Below_Fold_Sections']
-                    if isinstance(sections, dict):
-                        provider_info['has_below_fold_sections'] = True
-                        provider_info['below_fold_sections'] = sections
-                except:
-                    provider_info['below_fold_sections'] = str(row['Below_Fold_Sections'])
-            
-            # Add all column values for debugging
-            for col in df.columns:
-                provider_info['all_columns'][col] = str(row[col])[:100]  # Limit to 100 chars
-            
-            provider_details.append(provider_info)
-        
-        debug_info['provider_details'] = provider_details
-        
-        # Add section comparison info
-        if section_df is not None:
-            debug_info['section_comparison'] = {
-                "rows": len(section_df),
-                "columns": list(section_df.columns),
-                "sections_found": list(section_df['Section'].values) if 'Section' in section_df.columns else []
-            }
-        else:
-            debug_info['section_comparison'] = "No section comparison found"
-        
-        return jsonify(debug_info)
-        
-    except Exception as e:
-        return jsonify({"error": f"Debug failed: {str(e)}"}), 500
 
 @app.route('/download/report')
 def download_report():
@@ -1457,6 +1487,162 @@ def test_db():
             "guidance": guidance,
             "url_format": "Using: " + (masked_url if 'masked_url' in locals() else "URL not available")
         }, 500
+
+@app.route('/migrate-db')
+def migrate_database():
+    """Migrate database to add missing columns"""
+    try:
+        conn = get_db_conn()
+        migration_log = []
+        
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    # Check existing columns
+                    cur.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'analysis_results'
+                    """)
+                    existing_columns = [row['column_name'] for row in cur.fetchall()]
+                    migration_log.append(f"Existing columns: {existing_columns}")
+                    
+                    # Define required columns
+                    required_columns = {
+                        'session_id': 'VARCHAR(255) NOT NULL',
+                        'file_type': 'VARCHAR(50) NOT NULL',
+                        'file_name': 'VARCHAR(255) NOT NULL',
+                        'content': 'TEXT',
+                        'file_data': 'BYTEA',
+                        'client_name': 'VARCHAR(255)',
+                        'created_at': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+                    }
+                    
+                    # Add missing columns
+                    for col_name, col_type in required_columns.items():
+                        if col_name not in existing_columns and col_name != 'created_at':
+                            try:
+                                migration_log.append(f"Adding column: {col_name}")
+                                cur.execute(f"ALTER TABLE analysis_results ADD COLUMN {col_name} {col_type};")
+                                migration_log.append(f"✅ Successfully added {col_name}")
+                            except Exception as e:
+                                migration_log.append(f"❌ Error adding {col_name}: {str(e)}")
+                    
+                    # Verify final structure
+                    cur.execute("""
+                        SELECT column_name, data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'analysis_results'
+                        ORDER BY ordinal_position;
+                    """)
+                    final_columns = cur.fetchall()
+                    
+                    migration_log.append("\nFinal table structure:")
+                    for col in final_columns:
+                        migration_log.append(f"  - {col['column_name']}: {col['data_type']}")
+                    
+                    return jsonify({
+                        "status": "success",
+                        "message": "Database migration completed",
+                        "log": migration_log
+                    })
+                    
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Migration failed: {str(e)}",
+            "log": migration_log if 'migration_log' in locals() else []
+        }), 500
+
+@app.route('/debug/last-analysis')
+def debug_last_analysis():
+    """Debug route to see the structure of the last analysis"""
+    try:
+        session_id = app.config.get('LAST_SESSION_ID')
+        if not session_id:
+            return jsonify({"error": "No analysis has been run yet"}), 404
+        
+        # Get the CSV data
+        csv_result = get_analysis_result_from_db(session_id, 'csv')
+        if not csv_result:
+            return jsonify({"error": "No CSV data found"}), 404
+        
+        # Parse the CSV content
+        import io
+        import pandas as pd
+        df = pd.read_csv(io.StringIO(csv_result['content']))
+        
+        # Get section comparison
+        section_result = get_analysis_result_from_db(session_id, 'section_comparison')
+        section_df = None
+        if section_result:
+            section_df = pd.read_csv(io.StringIO(section_result['content']))
+        
+        # Analyze the data structure
+        debug_info = {
+            "session_id": session_id,
+            "total_providers": len(df),
+            "columns_found": list(df.columns),
+            "providers": list(df['Platform'].values) if 'Platform' in df.columns else [],
+        }
+        
+        # Check each provider's data
+        provider_details = []
+        for idx, row in df.iterrows():
+            provider_info = {
+                "platform": row.get('Platform', 'Unknown'),
+                "url": row.get('URL', 'Unknown'),
+                "has_above_fold_sections": False,
+                "has_below_fold_sections": False,
+                "above_fold_sections": {},
+                "below_fold_sections": {},
+                "all_columns": {}
+            }
+            
+            # Check for section columns
+            if 'Above_Fold_Sections' in row:
+                try:
+                    sections = json.loads(row['Above_Fold_Sections']) if isinstance(row['Above_Fold_Sections'], str) else row['Above_Fold_Sections']
+                    if isinstance(sections, dict):
+                        provider_info['has_above_fold_sections'] = True
+                        provider_info['above_fold_sections'] = sections
+                except:
+                    provider_info['above_fold_sections'] = str(row['Above_Fold_Sections'])
+            
+            if 'Below_Fold_Sections' in row:
+                try:
+                    sections = json.loads(row['Below_Fold_Sections']) if isinstance(row['Below_Fold_Sections'], str) else row['Below_Fold_Sections']
+                    if isinstance(sections, dict):
+                        provider_info['has_below_fold_sections'] = True
+                        provider_info['below_fold_sections'] = sections
+                except:
+                    provider_info['below_fold_sections'] = str(row['Below_Fold_Sections'])
+            
+            # Add all column values for debugging
+            for col in df.columns:
+                provider_info['all_columns'][col] = str(row[col])[:100]  # Limit to 100 chars
+            
+            provider_details.append(provider_info)
+        
+        debug_info['provider_details'] = provider_details
+        
+        # Add section comparison info
+        if section_df is not None:
+            debug_info['section_comparison'] = {
+                "rows": len(section_df),
+                "columns": list(section_df.columns),
+                "sections_found": list(section_df['Section'].values) if 'Section' in section_df.columns else []
+            }
+        else:
+            debug_info['section_comparison'] = "No section comparison found"
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({"error": f"Debug failed: {str(e)}"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
