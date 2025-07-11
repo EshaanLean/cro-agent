@@ -286,7 +286,7 @@ def get_analysis_result_from_db(session_id, file_type):
         print(f"Error retrieving analysis result from database: {e}")
         return None
 
-@app.route('/screenshot/<name>')
+@app.route('/screenshot/<n>')
 def serve_screenshot(name):
     image_bytes = get_screenshot_from_db(name, None)
     if image_bytes:
@@ -365,7 +365,7 @@ HTML = """
   <title>Dynamic Landing Page Analyzer</title>
   <style>
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f7fa; }
-    .container { max-width: 1200px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .container { max-width: 1400px; margin: auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
     h1 { color: #2c3e50; text-align: center; margin-bottom: 30px; }
     .section { margin-bottom: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #007bff; }
     .section h3 { color: #495057; margin-top: 0; }
@@ -392,6 +392,48 @@ HTML = """
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     .debug-section { margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 5px; }
     .debug-btn { background: #2196f3; color: white; text-decoration: none; padding: 8px 15px; border-radius: 3px; margin-right: 10px; display: inline-block; font-size: 12px; }
+    
+    /* New styles for result tables */
+    .results-container { margin-top: 30px; }
+    .table-section { margin-bottom: 30px; }
+    .table-section h3 { color: #2c3e50; margin-bottom: 15px; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    .data-table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    .data-table th { background: #007bff; color: white; padding: 12px; text-align: left; font-weight: 600; }
+    .data-table td { padding: 10px; border-bottom: 1px solid #eee; }
+    .data-table tr:hover { background: #f8f9fa; }
+    .data-table tr:nth-child(even) { background: #f8f9fa; }
+    .client-row { background: #e3f2fd !important; font-weight: 500; }
+    
+    /* Section comparison table styles */
+    .section-table { width: 100%; border-collapse: collapse; background: white; }
+    .section-table th { background: #343a40; color: white; padding: 12px; text-align: center; position: sticky; top: 0; z-index: 10; }
+    .section-table td { padding: 8px; border: 1px solid #dee2e6; text-align: center; }
+    .section-table .section-name { text-align: left; font-weight: 500; background: #f8f9fa; }
+    .section-table .separator { background: #e9ecef; font-weight: bold; color: #495057; }
+    .section-table .yes { color: #28a745; font-size: 20px; }
+    .section-table .no { color: #dc3545; font-size: 20px; }
+    
+    /* Scrollable wrapper for wide tables */
+    .table-wrapper { overflow-x: auto; max-height: 600px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; }
+    
+    /* Tabs for switching between views */
+    .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
+    .tab { padding: 10px 20px; background: #e9ecef; border: none; border-radius: 5px 5px 0 0; cursor: pointer; font-weight: 500; }
+    .tab.active { background: #007bff; color: white; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    
+    /* Key insights section */
+    .insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }
+    .insight-card { background: white; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; }
+    .insight-card h4 { color: #007bff; margin-top: 0; }
+    .insight-card .value { font-size: 24px; font-weight: bold; color: #2c3e50; }
+    
+    /* Expandable rows for detailed info */
+    .expandable { cursor: pointer; }
+    .expandable:hover { background: #e3f2fd !important; }
+    .detail-row { display: none; }
+    .detail-content { padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; }
   </style>
 </head>
 <body>
@@ -460,9 +502,12 @@ HTML = """
   {% if success %}
     <div class="success">{{ success }}</div>
   {% endif %}
-  {% if summary %}
+  
+  {% if analysis_data %}
     <div class="result">
       <h2>📊 Analysis Complete!</h2>
+      
+      <!-- Download Section -->
       <div class="download-section">
         <h3>Download Results:</h3>
         <a href="/download/csv" class="download-btn">📄 Download CSV Data</a>
@@ -470,11 +515,162 @@ HTML = """
         <a href="/download/report" class="download-btn">📑 Download Report</a>
         <a href="/download/all" class="download-btn">📦 Download All Files</a>
       </div>
-      <h3>Summary Preview:</h3>
-      <pre style="white-space: pre-wrap; background: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd; max-height: 400px; overflow-y: auto;">{{ summary }}</pre>
+      
+      <!-- Results Display Section -->
+      <div class="results-container">
+        <!-- Tabs -->
+        <div class="tabs">
+          <button class="tab active" onclick="showTab('overview')">📈 Overview</button>
+          <button class="tab" onclick="showTab('analysis')">🔍 Detailed Analysis</button>
+          <button class="tab" onclick="showTab('sections')">📋 Section Comparison</button>
+          <button class="tab" onclick="showTab('report')">📑 Summary Report</button>
+        </div>
+        
+        <!-- Overview Tab -->
+        <div id="overview" class="tab-content active">
+          <div class="table-section">
+            <h3>Key Insights</h3>
+            <div class="insights-grid">
+              <div class="insight-card">
+                <h4>Total Sites Analyzed</h4>
+                <div class="value">{{ analysis_data|length }}</div>
+              </div>
+              <div class="insight-card">
+                <h4>Client</h4>
+                <div class="value">{{ client_name }}</div>
+              </div>
+              <div class="insight-card">
+                <h4>Competitors</h4>
+                <div class="value">{{ analysis_data|length - 1 }}</div>
+              </div>
+              <div class="insight-card">
+                <h4>Unique Sections Found</h4>
+                <div class="value">{{ total_sections }}</div>
+              </div>
+            </div>
+            
+            <h3>Quick Comparison</h3>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Platform</th>
+                    <th>Type</th>
+                    <th>Main Offer</th>
+                    <th>Primary CTA</th>
+                    <th>Trust Elements</th>
+                    <th>Lead Gen Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in analysis_data %}
+                  <tr class="{% if row.Type == 'client' %}client-row{% endif %}">
+                    <td><strong>{{ row.Platform }}</strong></td>
+                    <td>{{ row.Type }}</td>
+                    <td>{{ row.Main_Offer[:100] }}{% if row.Main_Offer|length > 100 %}...{% endif %}</td>
+                    <td>{{ row.Primary_CTA }}</td>
+                    <td>{{ row.Trust_Elements[:80] }}{% if row.Trust_Elements|length > 80 %}...{% endif %}</td>
+                    <td>{{ row.Lead_Generation_Type }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Detailed Analysis Tab -->
+        <div id="analysis" class="tab-content">
+          <div class="table-section">
+            <h3>Complete Analysis Data</h3>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    {% for col in analysis_columns %}
+                    <th>{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in analysis_data %}
+                  <tr class="expandable" onclick="toggleDetail('detail-{{ loop.index }}')">
+                    {% for col in analysis_columns %}
+                    <td>
+                      {% if col in ['Above_Fold_Sections', 'Below_Fold_Sections'] %}
+                        <em>Click to expand</em>
+                      {% else %}
+                        {{ row[col][:100] if row[col]|length > 100 else row[col] }}
+                      {% endif %}
+                    </td>
+                    {% endfor %}
+                  </tr>
+                  <tr id="detail-{{ loop.index }}" class="detail-row">
+                    <td colspan="{{ analysis_columns|length }}">
+                      <div class="detail-content">
+                        <h4>Complete Details for {{ row.Platform }}</h4>
+                        {% for col in analysis_columns %}
+                        <p><strong>{{ col }}:</strong> {{ row[col] }}</p>
+                        {% endfor %}
+                      </div>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Section Comparison Tab -->
+        <div id="sections" class="tab-content">
+          <div class="table-section">
+            <h3>Section Presence Comparison</h3>
+            <div class="table-wrapper">
+              <table class="section-table">
+                <thead>
+                  <tr>
+                    <th style="text-align: left;">Section</th>
+                    {% for col in section_columns[1:] %}
+                    <th>{{ col }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in section_data %}
+                  <tr class="{% if '===' in row.Section %}separator{% endif %}">
+                    <td class="section-name">{{ row.Section }}</td>
+                    {% for col in section_columns[1:] %}
+                    <td>
+                      {% if row[col] == '✅' %}
+                        <span class="yes">✅</span>
+                      {% elif row[col] == '❌' %}
+                        <span class="no">❌</span>
+                      {% else %}
+                        {{ row[col] }}
+                      {% endif %}
+                    </td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Summary Report Tab -->
+        <div id="report" class="tab-content">
+          <div class="table-section">
+            <h3>Summary Report</h3>
+            <pre style="white-space: pre-wrap; background: white; padding: 15px; border-radius: 5px; border: 1px solid #ddd; max-height: 600px; overflow-y: auto;">{{ summary }}</pre>
+          </div>
+        </div>
+      </div>
     </div>
   {% endif %}
 </div>
+
 <script>
 function addUrl() {
   const container = document.getElementById('urlInputs');
@@ -492,15 +688,42 @@ function addUrl() {
   `;
   container.appendChild(newRow);
 }
+
 function removeUrl(button) {
   const rows = document.querySelectorAll('.url-row');
   if (rows.length > 1) {
     button.parentElement.remove();
   }
 }
+
 function showLoading() {
   document.getElementById('loading').style.display = 'block';
   document.getElementById('analysisForm').style.display = 'none';
+}
+
+function showTab(tabName) {
+  // Hide all tabs
+  const tabs = document.querySelectorAll('.tab-content');
+  tabs.forEach(tab => tab.classList.remove('active'));
+  
+  // Remove active class from all tab buttons
+  const tabButtons = document.querySelectorAll('.tab');
+  tabButtons.forEach(btn => btn.classList.remove('active'));
+  
+  // Show selected tab
+  document.getElementById(tabName).classList.add('active');
+  
+  // Add active class to clicked button
+  event.target.classList.add('active');
+}
+
+function toggleDetail(rowId) {
+  const detailRow = document.getElementById(rowId);
+  if (detailRow.style.display === 'table-row') {
+    detailRow.style.display = 'none';
+  } else {
+    detailRow.style.display = 'table-row';
+  }
 }
 </script>
 </body>
@@ -1157,6 +1380,13 @@ def index():
     error = None
     success = None
     prompt = ''
+    analysis_data = None
+    section_data = None
+    analysis_columns = None
+    section_columns = None
+    client_name = None
+    total_sections = 0
+    
     default_prompt = """
     Analyze this landing page and provide comprehensive insights about:
     1. Value proposition and messaging clarity
@@ -1219,13 +1449,65 @@ def index():
             
             # Run analysis
             summary, csv_path = analyze_landing_pages(landing_pages, prompt if prompt.strip() else None)
-            success = f"Analysis completed successfully! Processed {len(landing_pages)} landing pages. Data saved to database."
+            success = f"Analysis completed successfully! Processed {len(landing_pages)} landing pages."
+            
+            # Load the analysis data for display
+            session_id = app.config.get('LAST_SESSION_ID')
+            if session_id:
+                # Get main analysis data
+                csv_result = get_analysis_result_from_db(session_id, 'csv')
+                if csv_result and csv_result['content']:
+                    import io
+                    df = pd.read_csv(io.StringIO(csv_result['content']))
+                    
+                    # Convert DataFrame to list of dicts for template
+                    analysis_data = df.to_dict('records')
+                    analysis_columns = [col for col in df.columns if col not in ['Above_Fold_Sections', 'Below_Fold_Sections']]
+                    
+                    # For sections display, parse the JSON strings
+                    for row in analysis_data:
+                        try:
+                            if 'Above_Fold_Sections' in row and isinstance(row['Above_Fold_Sections'], str):
+                                row['Above_Fold_Sections'] = json.loads(row['Above_Fold_Sections'])
+                            if 'Below_Fold_Sections' in row and isinstance(row['Below_Fold_Sections'], str):
+                                row['Below_Fold_Sections'] = json.loads(row['Below_Fold_Sections'])
+                        except:
+                            pass
+                    
+                    # Get client name
+                    for row in analysis_data:
+                        if row.get('Type') == 'client':
+                            client_name = row['Platform']
+                            break
+                
+                # Get section comparison data
+                section_result = get_analysis_result_from_db(session_id, 'section_comparison')
+                if section_result and section_result['content']:
+                    section_df = pd.read_csv(io.StringIO(section_result['content']))
+                    section_data = section_df.to_dict('records')
+                    section_columns = list(section_df.columns)
+                    
+                    # Count total unique sections
+                    total_sections = len([row for row in section_data if '===' not in str(row.get('Section', ''))])
             
         except Exception as e:
             error = f"Analysis failed: {str(e)}"
             flushprint("Error in analysis:", e)
 
-    return render_template_string(HTML, summary=summary, error=error, success=success, prompt=prompt, default_prompt=default_prompt)
+    return render_template_string(
+        HTML, 
+        summary=summary, 
+        error=error, 
+        success=success, 
+        prompt=prompt, 
+        default_prompt=default_prompt,
+        analysis_data=analysis_data,
+        section_data=section_data,
+        analysis_columns=analysis_columns,
+        section_columns=section_columns,
+        client_name=client_name,
+        total_sections=total_sections
+    )
 
 @app.route('/download/csv')
 def download_csv():
