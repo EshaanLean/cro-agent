@@ -46,58 +46,6 @@ def init_database():
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # First, check if tables exist and their structure
-                    cur.execute("""
-                        SELECT column_name, data_type 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'analysis_results'
-                        ORDER BY ordinal_position;
-                    """)
-                    existing_columns = cur.fetchall()
-                    
-                    if existing_columns:
-                        print("Existing analysis_results columns:")
-                        for col in existing_columns:
-                            print(f"  - {col['column_name']}: {col['data_type']}")
-                        
-                        # Check if we need to add missing columns
-                        existing_col_names = [col['column_name'] for col in existing_columns]
-                        
-                        if 'file_type' not in existing_col_names:
-                            print("Adding missing column: file_type")
-                            cur.execute("ALTER TABLE analysis_results ADD COLUMN file_type VARCHAR(50);")
-                        
-                        if 'file_name' not in existing_col_names:
-                            print("Adding missing column: file_name")
-                            cur.execute("ALTER TABLE analysis_results ADD COLUMN file_name VARCHAR(255);")
-                        
-                        if 'content' not in existing_col_names:
-                            print("Adding missing column: content")
-                            cur.execute("ALTER TABLE analysis_results ADD COLUMN content TEXT;")
-                        
-                        if 'file_data' not in existing_col_names:
-                            print("Adding missing column: file_data")
-                            cur.execute("ALTER TABLE analysis_results ADD COLUMN file_data BYTEA;")
-                        
-                        if 'client_name' not in existing_col_names:
-                            print("Adding missing column: client_name")
-                            cur.execute("ALTER TABLE analysis_results ADD COLUMN client_name VARCHAR(255);")
-                    else:
-                        # Create the table if it doesn't exist
-                        print("Creating analysis_results table")
-                        cur.execute("""
-                            CREATE TABLE IF NOT EXISTS analysis_results (
-                                id SERIAL PRIMARY KEY,
-                                session_id VARCHAR(255) NOT NULL,
-                                file_type VARCHAR(50) NOT NULL,
-                                file_name VARCHAR(255) NOT NULL,
-                                content TEXT,
-                                file_data BYTEA,
-                                client_name VARCHAR(255),
-                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                            )
-                        """)
-                    
                     # Create screenshots table
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS screenshots (
@@ -108,6 +56,36 @@ def init_database():
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
+                    print("Screenshots table ready")
+                    
+                    # Create landing_page_analysis table (NEW)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS landing_page_analysis (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(255) NOT NULL,
+                            file_type VARCHAR(50) NOT NULL,
+                            file_name VARCHAR(255) NOT NULL,
+                            content TEXT,
+                            file_data BYTEA,
+                            client_name VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    print("Landing page analysis table ready")
+                    
+                    # Check if the old analysis_results table exists and log its structure
+                    cur.execute("""
+                        SELECT column_name, data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'analysis_results'
+                        ORDER BY ordinal_position
+                        LIMIT 5;
+                    """)
+                    existing_columns = cur.fetchall()
+                    
+                    if existing_columns:
+                        print("Note: Found existing analysis_results table with different structure")
+                        print("Using new landing_page_analysis table for this app")
                     
                     print("Database tables initialized successfully")
         finally:
@@ -218,64 +196,33 @@ def save_screenshot_to_db(name, url, image_bytes):
         # Don't raise - continue without DB save
 
 def save_analysis_result_to_db(session_id, file_type, file_name, content=None, file_data=None, client_name=None):
-    """Save analysis results (CSV, reports) to database with error handling for missing columns"""
+    """Save analysis results to the landing_page_analysis table"""
     try:
         conn = get_db_conn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # First, check what columns exist
+                    # Use the new landing_page_analysis table
                     cur.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'analysis_results'
-                    """)
-                    existing_columns = [row['column_name'] for row in cur.fetchall()]
-                    
-                    # Build insert query based on available columns
-                    columns = ['session_id']  # Always required
-                    values = [session_id]
-                    placeholders = ['%s']
-                    
-                    # Add optional columns if they exist
-                    if 'file_type' in existing_columns:
-                        columns.append('file_type')
-                        values.append(file_type)
-                        placeholders.append('%s')
-                    
-                    if 'file_name' in existing_columns:
-                        columns.append('file_name')
-                        values.append(file_name)
-                        placeholders.append('%s')
-                    
-                    if 'content' in existing_columns and content is not None:
-                        columns.append('content')
-                        values.append(content)
-                        placeholders.append('%s')
-                    
-                    if 'file_data' in existing_columns and file_data is not None:
-                        columns.append('file_data')
-                        values.append(psycopg2.Binary(file_data))
-                        placeholders.append('%s')
-                    
-                    if 'client_name' in existing_columns and client_name is not None:
-                        columns.append('client_name')
-                        values.append(client_name)
-                        placeholders.append('%s')
-                    
-                    # Build and execute the query
-                    query = f"""
-                        INSERT INTO analysis_results ({', '.join(columns)}) 
-                        VALUES ({', '.join(placeholders)})
-                    """
-                    
-                    cur.execute(query, values)
-                    print(f"Saved {file_type} to database: {file_name}")
+                        INSERT INTO landing_page_analysis 
+                        (session_id, file_type, file_name, content, file_data, client_name) 
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        session_id, 
+                        file_type, 
+                        file_name, 
+                        content, 
+                        psycopg2.Binary(file_data) if file_data else None, 
+                        client_name
+                    ))
+                    print(f"Saved {file_type} to landing_page_analysis table: {file_name}")
         finally:
             conn.close()
     except Exception as e:
         print(f"Error saving {file_type} to database: {e}")
-        # Don't raise - continue without DB save
+        # If the new table doesn't exist, try the original approach
+        if "landing_page_analysis" in str(e):
+            print("Landing page analysis table doesn't exist. Please visit /create-landing-page-tables")
 
 def get_screenshot_from_db(name, url=None):
     try:
@@ -305,66 +252,34 @@ def get_screenshot_from_db(name, url=None):
         return None
 
 def get_analysis_result_from_db(session_id, file_type):
-    """Retrieve analysis results from database with error handling for missing columns"""
+    """Retrieve analysis results from the landing_page_analysis table"""
     try:
         conn = get_db_conn()
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # First, check what columns exist
-                    cur.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'analysis_results'
-                    """)
-                    existing_columns = [row['column_name'] for row in cur.fetchall()]
-                    
-                    # Build query based on available columns
-                    select_columns = []
-                    if 'file_name' in existing_columns:
-                        select_columns.append('file_name')
-                    if 'content' in existing_columns:
-                        select_columns.append('content')
-                    if 'file_data' in existing_columns:
-                        select_columns.append('file_data')
-                    
-                    if not select_columns:
-                        print("Warning: No expected columns found in analysis_results table")
-                        return None
-                    
-                    # Build the query
-                    query = f"SELECT {', '.join(select_columns)} FROM analysis_results WHERE session_id=%s"
-                    
-                    # Add file_type condition only if column exists
-                    if 'file_type' in existing_columns:
-                        query += " AND file_type=%s ORDER BY created_at DESC LIMIT 1"
-                        cur.execute(query, (session_id, file_type))
-                    else:
-                        query += " ORDER BY created_at DESC LIMIT 1"
-                        cur.execute(query, (session_id,))
-                    
-                    row = cur.fetchone()
-                    if row:
-                        # Build result dictionary with available data
-                        result = {}
-                        if 'file_name' in select_columns:
-                            result['file_name'] = row.get('file_name', f'{file_type}.csv')
-                        else:
-                            result['file_name'] = f'{file_type}.csv'  # Default name
-                            
-                        if 'content' in select_columns:
-                            result['content'] = row.get('content', '')
-                        else:
-                            result['content'] = ''
-                            
-                        if 'file_data' in select_columns:
-                            result['file_data'] = row.get('file_data', b'')
-                        else:
-                            result['file_data'] = b''
+                    # Try the new table first
+                    try:
+                        cur.execute("""
+                            SELECT file_name, content, file_data 
+                            FROM landing_page_analysis 
+                            WHERE session_id=%s AND file_type=%s 
+                            ORDER BY created_at DESC LIMIT 1
+                        """, (session_id, file_type))
                         
-                        return result
-                    else:
-                        return None
+                        row = cur.fetchone()
+                        if row:
+                            return {
+                                'file_name': row['file_name'],
+                                'content': row['content'],
+                                'file_data': row['file_data']
+                            }
+                    except Exception as e:
+                        if "landing_page_analysis" in str(e):
+                            print("Landing page analysis table doesn't exist")
+                            return None
+                        raise
+                        
         finally:
             conn.close()
     except Exception as e:
@@ -396,19 +311,47 @@ def list_screenshots():
 
 @app.route('/analysis_results')
 def list_analysis_results():
-    """List recent analysis results"""
+    """List recent analysis results from the landing_page_analysis table"""
     try:
         conn = get_db_conn()
         try:
             with conn:
                 with conn.cursor() as cur:
+                    # Check if landing_page_analysis table exists
                     cur.execute("""
-                        SELECT session_id, file_type, file_name, client_name, created_at 
-                        FROM analysis_results 
-                        ORDER BY created_at DESC LIMIT 50
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'landing_page_analysis'
+                        )
                     """)
-                    rows = cur.fetchall()
-            return jsonify(rows)
+                    table_exists = cur.fetchone()['exists']
+                    
+                    if table_exists:
+                        # Use the new table
+                        cur.execute("""
+                            SELECT session_id, file_type, file_name, client_name, created_at 
+                            FROM landing_page_analysis 
+                            ORDER BY created_at DESC LIMIT 50
+                        """)
+                        rows = cur.fetchall()
+                        return jsonify({
+                            "table": "landing_page_analysis",
+                            "results": rows
+                        })
+                    else:
+                        # Fallback to old table structure
+                        cur.execute("""
+                            SELECT session_id, file_type, file_name, client_name, created_at 
+                            FROM analysis_results 
+                            WHERE file_type IS NOT NULL
+                            ORDER BY created_at DESC LIMIT 50
+                        """)
+                        rows = cur.fetchall()
+                        return jsonify({
+                            "table": "analysis_results (old)",
+                            "message": "Please create new tables by visiting /create-landing-page-tables",
+                            "results": rows
+                        })
         finally:
             conn.close()
     except Exception as e:
@@ -460,11 +403,12 @@ HTML = """
     <h4>🔍 Debug & Database Status</h4>
     <a href="/test-db" class="debug-btn" target="_blank">Test DB Connection</a>
     <a href="/check-env" class="debug-btn" target="_blank">Check Environment</a>
+    <a href="/create-landing-page-tables" class="debug-btn" target="_blank" style="background: #ff5722;">Create Landing Page Tables</a>
     <a href="/migrate-db" class="debug-btn" target="_blank">Migrate Database</a>
     <a href="/screenshots" class="debug-btn" target="_blank">View Screenshots DB</a>
     <a href="/analysis_results" class="debug-btn" target="_blank">View Analysis Results DB</a>
     <a href="/debug/last-analysis" class="debug-btn" target="_blank">Debug Last Analysis</a>
-    <p><small>Check these links to diagnose connection issues and see stored data</small></p>
+    <p><small>If you're getting database errors, click "Create Landing Page Tables" first!</small></p>
   </div>
 
   <form method="POST" enctype="multipart/form-data" id="analysisForm">
@@ -590,7 +534,7 @@ def extract_site_name(url):
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, all_providers=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
         pil_img = _prepare_image(Image.open(io.BytesIO(image_bytes)))
 
         # Text content section
@@ -1488,6 +1432,63 @@ def test_db():
             "url_format": "Using: " + (masked_url if 'masked_url' in locals() else "URL not available")
         }, 500
 
+@app.route('/create-landing-page-tables')
+def create_landing_page_tables():
+    """Create separate tables for landing page analysis"""
+    try:
+        conn = get_db_conn()
+        migration_log = []
+        
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    # Create a new table specifically for landing page analysis
+                    migration_log.append("Creating landing_page_analysis table...")
+                    
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS landing_page_analysis (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(255) NOT NULL,
+                            file_type VARCHAR(50) NOT NULL,
+                            file_name VARCHAR(255) NOT NULL,
+                            content TEXT,
+                            file_data BYTEA,
+                            client_name VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    migration_log.append("✅ Created landing_page_analysis table")
+                    
+                    # Check if it was created successfully
+                    cur.execute("""
+                        SELECT column_name, data_type 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'landing_page_analysis'
+                        ORDER BY ordinal_position;
+                    """)
+                    columns = cur.fetchall()
+                    
+                    migration_log.append("\nTable structure:")
+                    for col in columns:
+                        migration_log.append(f"  - {col['column_name']}: {col['data_type']}")
+                    
+                    return jsonify({
+                        "status": "success",
+                        "message": "Landing page tables created successfully",
+                        "log": migration_log
+                    })
+                    
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Failed to create tables: {str(e)}",
+            "log": migration_log if 'migration_log' in locals() else []
+        }), 500
+
 @app.route('/migrate-db')
 def migrate_database():
     """Migrate database to add missing columns"""
@@ -1498,48 +1499,34 @@ def migrate_database():
         try:
             with conn:
                 with conn.cursor() as cur:
-                    # Check existing columns
+                    # First create the landing_page_analysis table if it doesn't exist
+                    migration_log.append("Ensuring landing_page_analysis table exists...")
                     cur.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'analysis_results'
+                        CREATE TABLE IF NOT EXISTS landing_page_analysis (
+                            id SERIAL PRIMARY KEY,
+                            session_id VARCHAR(255) NOT NULL,
+                            file_type VARCHAR(50) NOT NULL,
+                            file_name VARCHAR(255) NOT NULL,
+                            content TEXT,
+                            file_data BYTEA,
+                            client_name VARCHAR(255),
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
                     """)
-                    existing_columns = [row['column_name'] for row in cur.fetchall()]
-                    migration_log.append(f"Existing columns: {existing_columns}")
+                    migration_log.append("✅ Landing page analysis table ready")
                     
-                    # Define required columns
-                    required_columns = {
-                        'session_id': 'VARCHAR(255) NOT NULL',
-                        'file_type': 'VARCHAR(50) NOT NULL',
-                        'file_name': 'VARCHAR(255) NOT NULL',
-                        'content': 'TEXT',
-                        'file_data': 'BYTEA',
-                        'client_name': 'VARCHAR(255)',
-                        'created_at': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
-                    }
-                    
-                    # Add missing columns
-                    for col_name, col_type in required_columns.items():
-                        if col_name not in existing_columns and col_name != 'created_at':
-                            try:
-                                migration_log.append(f"Adding column: {col_name}")
-                                cur.execute(f"ALTER TABLE analysis_results ADD COLUMN {col_name} {col_type};")
-                                migration_log.append(f"✅ Successfully added {col_name}")
-                            except Exception as e:
-                                migration_log.append(f"❌ Error adding {col_name}: {str(e)}")
-                    
-                    # Verify final structure
+                    # Check if old analysis_results table exists
                     cur.execute("""
-                        SELECT column_name, data_type 
-                        FROM information_schema.columns 
-                        WHERE table_name = 'analysis_results'
-                        ORDER BY ordinal_position;
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables 
+                            WHERE table_name = 'analysis_results'
+                        )
                     """)
-                    final_columns = cur.fetchall()
+                    old_table_exists = cur.fetchone()['exists']
                     
-                    migration_log.append("\nFinal table structure:")
-                    for col in final_columns:
-                        migration_log.append(f"  - {col['column_name']}: {col['data_type']}")
+                    if old_table_exists:
+                        migration_log.append("\nNote: Old analysis_results table exists")
+                        migration_log.append("The app will use the new landing_page_analysis table")
                     
                     return jsonify({
                         "status": "success",
