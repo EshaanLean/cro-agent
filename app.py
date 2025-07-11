@@ -567,9 +567,9 @@ HTML = """
                   <tr class="{% if row.Type == 'client' %}client-row{% endif %}">
                     <td><strong>{{ row.Platform }}</strong></td>
                     <td>{{ row.Type }}</td>
-                    <td>{{ row.Main_Offer[:100] }}{% if row.Main_Offer|length > 100 %}...{% endif %}</td>
+                    <td>{{ (row.Main_Offer|string)[:100] }}{% if (row.Main_Offer|string)|length > 100 %}...{% endif %}</td>
                     <td>{{ row.Primary_CTA }}</td>
-                    <td>{{ row.Trust_Elements[:80] }}{% if row.Trust_Elements|length > 80 %}...{% endif %}</td>
+                    <td>{{ (row.Trust_Elements|string)[:80] }}{% if (row.Trust_Elements|string)|length > 80 %}...{% endif %}</td>
                     <td>{{ row.Lead_Generation_Type }}</td>
                   </tr>
                   {% endfor %}
@@ -600,7 +600,8 @@ HTML = """
                       {% if col in ['Above_Fold_Sections', 'Below_Fold_Sections'] %}
                         <em>Click to expand</em>
                       {% else %}
-                        {{ row[col][:100] if row[col]|length > 100 else row[col] }}
+                        {% set val = row[col]|string %}
+                        {{ val[:100] if val|length > 100 else val }}
                       {% endif %}
                     </td>
                     {% endfor %}
@@ -757,7 +758,7 @@ def extract_site_name(url):
 def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, all_providers=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-2.5-pro')
         pil_img = _prepare_image(Image.open(io.BytesIO(image_bytes)))
 
         # Text content section
