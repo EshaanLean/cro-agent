@@ -131,6 +131,8 @@ DEFAULT_ANALYSIS_PROMPT = """Analyze this landing page and provide comprehensive
 5. Conversion optimization opportunities
 6. Competitive positioning elements
 7. Identify ALL sections on the page (both above and below the fold)
+   - Be comprehensive - identify every distinct section regardless of industry
+   - Use descriptive names that clearly indicate the section's purpose
 8. Compare section presence across competitors to identify gaps and opportunities"""
 
 DEFAULT_STRUCTURED_PROMPT_TEMPLATE = """Analyze this landing page screenshot for {provider_name} ({url}).
@@ -138,8 +140,10 @@ DEFAULT_STRUCTURED_PROMPT_TEMPLATE = """Analyze this landing page screenshot for
 INSTRUCTIONS:
 1. Examine the ENTIRE page - both above and below the fold
 2. Identify ALL sections and elements present on the page
-3. Return ONLY a JSON object with the exact structure shown below
-4. No explanations, no markdown formatting, just the JSON
+3. Be industry-agnostic - identify sections based on their function, not predefined categories
+4. Use descriptive, specific names for each section (e.g., "Customer Success Stories Carousel" not just "Testimonials")
+5. Return ONLY a JSON object with the exact structure shown below
+6. No explanations, no markdown formatting, just the JSON
 
 {text_content_section}
 
@@ -160,45 +164,27 @@ You MUST return this EXACT JSON structure:
   "Target_Audience": "[identified target audience]",
   "Unique_Selling_Points": "[key differentiators mentioned]",
   "Lead_Generation_Type": "[type: email signup, free trial, purchase, etc.]",
-  "Above_Fold_Sections": {{
-    "Hero_Section": [true/false],
-    "Navigation_Bar": [true/false],
-    "Value_Proposition": [true/false],
-    "CTA_Buttons": [true/false],
-    "Trust_Indicators": [true/false],
-    "Social_Proof": [true/false],
-    "Feature_Preview": [true/false]
-  }},
-  "Below_Fold_Sections": {{
-    "Course_Curriculum": [true/false],
-    "Student_Testimonials": [true/false],
-    "Success_Stories": [true/false],
-    "Instructor_Profiles": [true/false],
-    "Pricing_Section": [true/false],
-    "FAQ_Section": [true/false],
-    "Company_Logos": [true/false],
-    "Certification_Info": [true/false],
-    "Program_Details": [true/false],
-    "Career_Services": [true/false],
-    "Learning_Outcomes": [true/false],
-    "Prerequisites": [true/false],
-    "Time_Commitment": [true/false],
-    "Refund_Policy": [true/false],
-    "Contact_Info": [true/false],
-    "Footer_Section": [true/false],
-    "Blog_Articles": [true/false],
-    "Video_Content": [true/false],
-    "Interactive_Demo": [true/false],
-    "Comparison_Chart": [true/false],
-    "Awards_Recognition": [true/false],
-    "Media_Mentions": [true/false],
-    "Community_Section": [true/false],
-    "Resources_Downloads": [true/false]
-  }}
+  "Above_Fold_Sections": [
+    "[List each distinct section name you identify above the fold]",
+    "[e.g., 'Hero Banner', 'Navigation Menu', 'Announcement Bar', etc.]"
+  ],
+  "Below_Fold_Sections": [
+    "[List each distinct section name you identify below the fold]",
+    "[Examples for different industries:]",
+    "[E-commerce: 'Product Showcase', 'Customer Reviews', 'Shipping Information', 'Recently Viewed']",
+    "[SaaS: 'Feature Grid', 'Integration Partners', 'Security Badges', 'Comparison Table']",
+    "[Healthcare: 'Services Overview', 'Doctor Profiles', 'Patient Testimonials', 'Insurance Accepted']",
+    "[Finance: 'Investment Options', 'Calculator Tools', 'Market Updates', 'Regulatory Compliance']",
+    "[Be specific and descriptive - 'Product Showcase Carousel' not just 'Products']",
+    "[Include ALL sections you can identify, regardless of industry]"
+  ]
 }}
 
-Replace [true/false] with true if the section exists, false if it doesn't.
-Add any additional sections you identify in the Below_Fold_Sections."""
+IMPORTANT: 
+- Above_Fold_Sections and Below_Fold_Sections should be ARRAYS of section names (strings)
+- Identify sections by their function/content, not by HTML structure
+- Be comprehensive - include every distinct section you can identify
+- Use descriptive names that clearly indicate what the section contains"""
 
 def _prepare_image(pil_img: Image.Image) -> Image.Image:
     if max(pil_img.size) > MAX_DIM:
@@ -586,6 +572,8 @@ HTML = """
         <textarea name="structured_prompt" rows="20" class="prompt-editor">{{ structured_prompt }}</textarea>
         <div class="prompt-info" style="margin-top: 10px;">
           ⚠️ <strong>Warning:</strong> Modifying this template may break the analysis tables and reports. Only change if you understand the JSON structure.
+          <br><br>
+          ℹ️ <strong>Note:</strong> The AI now dynamically identifies all sections it finds on each page rather than checking for predefined sections. This makes the tool work for any industry (e-commerce, SaaS, healthcare, finance, etc.).
         </div>
       </div>
     </div>
@@ -714,7 +702,7 @@ HTML = """
                     {% for col in analysis_columns %}
                     <td>
                       {% if col in ['Above_Fold_Sections', 'Below_Fold_Sections'] %}
-                        <em>Click to expand</em>
+                        <em>{{ row[col]|length if row[col] is iterable and row[col] is not string else 0 }} sections - Click to expand</em>
                       {% else %}
                         {% set val = row[col]|string %}
                         {{ val[:100] if val|length > 100 else val }}
@@ -729,6 +717,22 @@ HTML = """
                         {% for col in analysis_columns %}
                         <p><strong>{{ col }}:</strong> {{ row[col] }}</p>
                         {% endfor %}
+                        {% if row.Above_Fold_Sections %}
+                        <p><strong>Above Fold Sections ({{ row.Above_Fold_Sections|length }}):</strong></p>
+                        <ul>
+                          {% for section in row.Above_Fold_Sections %}
+                          <li>{{ section }}</li>
+                          {% endfor %}
+                        </ul>
+                        {% endif %}
+                        {% if row.Below_Fold_Sections %}
+                        <p><strong>Below Fold Sections ({{ row.Below_Fold_Sections|length }}):</strong></p>
+                        <ul>
+                          {% for section in row.Below_Fold_Sections %}
+                          <li>{{ section }}</li>
+                          {% endfor %}
+                        </ul>
+                        {% endif %}
                       </div>
                     </td>
                   </tr>
@@ -963,23 +967,18 @@ Text Content Preview (first 5000 chars):
             result_dict["Platform"] = provider_name
             result_dict["URL"] = url
             
-            # Validate sections are dictionaries
-            if not isinstance(result_dict.get("Above_Fold_Sections"), dict):
-                flushprint("Warning: Above_Fold_Sections is not a dict, creating default")
-                result_dict["Above_Fold_Sections"] = {
-                    "Hero_Section": True,
-                    "Navigation_Bar": True
-                }
+            # Validate sections are arrays
+            if not isinstance(result_dict.get("Above_Fold_Sections"), list):
+                flushprint("Warning: Above_Fold_Sections is not a list, creating default")
+                result_dict["Above_Fold_Sections"] = ["Hero Section", "Navigation Bar"]
             
-            if not isinstance(result_dict.get("Below_Fold_Sections"), dict):
-                flushprint("Warning: Below_Fold_Sections is not a dict, creating default")
-                result_dict["Below_Fold_Sections"] = {
-                    "Footer_Section": True
-                }
+            if not isinstance(result_dict.get("Below_Fold_Sections"), list):
+                flushprint("Warning: Below_Fold_Sections is not a list, creating default")
+                result_dict["Below_Fold_Sections"] = ["Footer Section"]
             
             # Count sections for logging
-            above_count = len(result_dict.get("Above_Fold_Sections", {}))
-            below_count = len(result_dict.get("Below_Fold_Sections", {}))
+            above_count = len(result_dict.get("Above_Fold_Sections", []))
+            below_count = len(result_dict.get("Below_Fold_Sections", []))
             flushprint(f"Success! Found {above_count} above-fold and {below_count} below-fold sections")
             
             return result_dict
@@ -1001,6 +1000,7 @@ Text Content Preview (first 5000 chars):
             return {
                 "Platform": provider_name,
                 "URL": url,
+                "Type": "error",
                 "Main_Offer": "JSON Parse Error",
                 "Primary_CTA": "Error",
                 "Secondary_CTA": "Error",
@@ -1013,8 +1013,8 @@ Text Content Preview (first 5000 chars):
                 "Target_Audience": "Error",
                 "Unique_Selling_Points": "Error",
                 "Lead_Generation_Type": "Error",
-                "Above_Fold_Sections": {"Parse_Error": True},
-                "Below_Fold_Sections": {"Parse_Error": True},
+                "Above_Fold_Sections": ["Parse Error"],
+                "Below_Fold_Sections": ["Parse Error"],
                 "error": f"JSON parse error: {str(e)}",
                 "response_length": len(response_text)
             }
@@ -1024,6 +1024,7 @@ Text Content Preview (first 5000 chars):
         return {
             "Platform": provider_name,
             "URL": url,
+            "Type": "error",
             "Main_Offer": f"API Error: {type(e).__name__}",
             "Primary_CTA": "Error",
             "Secondary_CTA": "Error",
@@ -1036,8 +1037,8 @@ Text Content Preview (first 5000 chars):
             "Target_Audience": "Error",
             "Unique_Selling_Points": "Error",
             "Lead_Generation_Type": "Error",
-            "Above_Fold_Sections": {},
-            "Below_Fold_Sections": {},
+            "Above_Fold_Sections": [],
+            "Below_Fold_Sections": [],
             "error": str(e)
         }
 
@@ -1062,36 +1063,40 @@ def consolidate_sections_across_providers(all_course_data):
             continue
             
         # Collect above fold sections
-        above_fold = provider_data.get('Above_Fold_Sections', {})
-        if isinstance(above_fold, dict):
-            all_above_fold_sections.update(above_fold.keys())
-            flushprint(f"  Found {len(above_fold)} above-fold sections")
+        above_fold = provider_data.get('Above_Fold_Sections', [])
+        if isinstance(above_fold, list):
+            # Normalize section names to avoid duplicates due to case differences
+            normalized_sections = [section.strip() for section in above_fold if section and section.strip()]
+            all_above_fold_sections.update(normalized_sections)
+            flushprint(f"  Found {len(above_fold)} above-fold sections: {above_fold}")
         else:
-            flushprint(f"  Warning: Above_Fold_Sections is not a dict: {type(above_fold)}")
+            flushprint(f"  Warning: Above_Fold_Sections is not a list: {type(above_fold)}")
         
         # Collect below fold sections
-        below_fold = provider_data.get('Below_Fold_Sections', {})
-        if isinstance(below_fold, dict):
-            all_below_fold_sections.update(below_fold.keys())
-            flushprint(f"  Found {len(below_fold)} below-fold sections")
+        below_fold = provider_data.get('Below_Fold_Sections', [])
+        if isinstance(below_fold, list):
+            # Normalize section names to avoid duplicates due to case differences
+            normalized_sections = [section.strip() for section in below_fold if section and section.strip()]
+            all_below_fold_sections.update(normalized_sections)
+            flushprint(f"  Found {len(below_fold)} below-fold sections: {below_fold}")
         else:
-            flushprint(f"  Warning: Below_Fold_Sections is not a dict: {type(below_fold)}")
+            flushprint(f"  Warning: Below_Fold_Sections is not a list: {type(below_fold)}")
     
     flushprint(f"Total unique above-fold sections: {len(all_above_fold_sections)}")
     flushprint(f"Total unique below-fold sections: {len(all_below_fold_sections)}")
     
-    # If no sections found, add default sections
+    # If no sections found, add generic defaults
     if not all_above_fold_sections:
         all_above_fold_sections = {
-            "Hero_Section", "Navigation_Bar", "Value_Proposition", 
-            "CTA_Buttons", "Trust_Indicators", "Feature_Highlights"
+            "Hero Section", "Navigation Bar", "Value Proposition", 
+            "Call-to-Action", "Trust Indicators"
         }
         flushprint("No above-fold sections found, using defaults")
     
     if not all_below_fold_sections:
         all_below_fold_sections = {
-            "Features_Section", "Testimonials", "Pricing", 
-            "FAQ", "Footer", "Contact_Info"
+            "Features Section", "Testimonials", "Pricing", 
+            "FAQ", "Footer", "Contact Information"
         }
         flushprint("No below-fold sections found, using defaults")
     
@@ -1147,9 +1152,9 @@ def create_section_comparison_dataframe(all_course_data):
                 continue
             provider_name = provider['Platform']
             if provider_name in [p['Platform'] for p in valid_providers]:
-                above_fold = provider.get('Above_Fold_Sections', {})
-                if isinstance(above_fold, dict) and section in above_fold:
-                    row[provider_name] = '✅' if above_fold[section] else '❌'
+                above_fold = provider.get('Above_Fold_Sections', [])
+                if isinstance(above_fold, list) and section in above_fold:
+                    row[provider_name] = '✅'
                 else:
                     row[provider_name] = '❌'
         comparison_data.append(row)
@@ -1168,12 +1173,46 @@ def create_section_comparison_dataframe(all_course_data):
                 continue
             provider_name = provider['Platform']
             if provider_name in [p['Platform'] for p in valid_providers]:
-                below_fold = provider.get('Below_Fold_Sections', {})
-                if isinstance(below_fold, dict) and section in below_fold:
-                    row[provider_name] = '✅' if below_fold[section] else '❌'
+                below_fold = provider.get('Below_Fold_Sections', [])
+                if isinstance(below_fold, list) and section in below_fold:
+                    row[provider_name] = '✅'
                 else:
                     row[provider_name] = '❌'
         comparison_data.append(row)
+    
+    # Add section count summary
+    summary_row = {'Section': '=== SECTION COUNTS ==='}
+    for provider in valid_providers:
+        summary_row[provider['Platform']] = ''
+    comparison_data.append(summary_row)
+    
+    # Add above fold count
+    count_row_above = {'Section': 'Total Above Fold Sections'}
+    for provider in all_course_data:
+        if 'error' in provider:
+            continue
+        provider_name = provider['Platform']
+        if provider_name in [p['Platform'] for p in valid_providers]:
+            above_fold = provider.get('Above_Fold_Sections', [])
+            if isinstance(above_fold, list):
+                count_row_above[provider_name] = str(len(above_fold))
+            else:
+                count_row_above[provider_name] = '0'
+    comparison_data.append(count_row_above)
+    
+    # Add below fold count
+    count_row_below = {'Section': 'Total Below Fold Sections'}
+    for provider in all_course_data:
+        if 'error' in provider:
+            continue
+        provider_name = provider['Platform']
+        if provider_name in [p['Platform'] for p in valid_providers]:
+            below_fold = provider.get('Below_Fold_Sections', [])
+            if isinstance(below_fold, list):
+                count_row_below[provider_name] = str(len(below_fold))
+            else:
+                count_row_below[provider_name] = '0'
+    comparison_data.append(count_row_below)
     
     # Create DataFrame
     df = pd.DataFrame(comparison_data)
@@ -1231,7 +1270,9 @@ def generate_summary_report(course_data_df: pd.DataFrame, client_name: str, sect
         3. Provide a **Section Gap Analysis** based on the section comparison table:
            - Identify critical sections that competitors have but {client_name} is missing
            - Highlight unique sections that {client_name} has as competitive advantages
-           - Recommend priority sections to add based on industry best practices
+           - Note: Sections are dynamically identified based on actual content found on each site
+           - Consider industry-specific sections that may be important for conversion
+           - Recommend priority sections to add based on competitor insights and best practices
         4. Provide a **Priority Opportunities Table** with:
            - Opportunity
            - Impact Level (High/Medium/Low)
@@ -1535,7 +1576,7 @@ def index():
                     analysis_data = df.to_dict('records')
                     analysis_columns = [col for col in df.columns if col not in ['Above_Fold_Sections', 'Below_Fold_Sections']]
                     
-                    # For sections display, parse the JSON strings
+                    # For sections display, parse the JSON strings if they are strings
                     for row in analysis_data:
                         try:
                             if 'Above_Fold_Sections' in row and isinstance(row['Above_Fold_Sections'], str):
@@ -1558,8 +1599,8 @@ def index():
                     section_data = section_df.to_dict('records')
                     section_columns = list(section_df.columns)
                     
-                    # Count total unique sections
-                    total_sections = len([row for row in section_data if '===' not in str(row.get('Section', ''))])
+                    # Count total unique sections (excluding separators and summary rows)
+                    total_sections = len([row for row in section_data if '===' not in str(row.get('Section', '')) and 'Total' not in str(row.get('Section', ''))])
             
         except Exception as e:
             error = f"Analysis failed: {str(e)}"
