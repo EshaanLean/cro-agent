@@ -122,6 +122,84 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
 MAX_DIM = 2048
 
+# Default prompts as global variables
+DEFAULT_ANALYSIS_PROMPT = """Analyze this landing page and provide comprehensive insights about:
+1. Value proposition and messaging clarity
+2. Call-to-action effectiveness and placement
+3. Trust elements and social proof
+4. Visual design and user experience
+5. Conversion optimization opportunities
+6. Competitive positioning elements
+7. Identify ALL sections on the page (both above and below the fold)
+8. Compare section presence across competitors to identify gaps and opportunities"""
+
+DEFAULT_STRUCTURED_PROMPT_TEMPLATE = """Analyze this landing page screenshot for {provider_name} ({url}).
+
+INSTRUCTIONS:
+1. Examine the ENTIRE page - both above and below the fold
+2. Identify ALL sections and elements present on the page
+3. Return ONLY a JSON object with the exact structure shown below
+4. No explanations, no markdown formatting, just the JSON
+
+{text_content_section}
+
+You MUST return this EXACT JSON structure:
+
+{{
+  "Platform": "{provider_name}",
+  "URL": "{url}",
+  "Main_Offer": "[describe the main product/service offered]",
+  "Primary_CTA": "[primary call-to-action text and location]",
+  "Secondary_CTA": "[secondary CTA if present, or 'None']",
+  "Headline": "[main headline text]",
+  "Subheadline": "[subheadline or tagline text]",
+  "Trust_Elements": "[list trust signals like logos, testimonials, ratings]",
+  "Visual_Design": "[describe design, colors, layout style]",
+  "Above_Fold_Elements": "[list key elements visible without scrolling]",
+  "Pricing_Info": "[pricing details if shown, or 'Not visible']",
+  "Target_Audience": "[identified target audience]",
+  "Unique_Selling_Points": "[key differentiators mentioned]",
+  "Lead_Generation_Type": "[type: email signup, free trial, purchase, etc.]",
+  "Above_Fold_Sections": {{
+    "Hero_Section": [true/false],
+    "Navigation_Bar": [true/false],
+    "Value_Proposition": [true/false],
+    "CTA_Buttons": [true/false],
+    "Trust_Indicators": [true/false],
+    "Social_Proof": [true/false],
+    "Feature_Preview": [true/false]
+  }},
+  "Below_Fold_Sections": {{
+    "Course_Curriculum": [true/false],
+    "Student_Testimonials": [true/false],
+    "Success_Stories": [true/false],
+    "Instructor_Profiles": [true/false],
+    "Pricing_Section": [true/false],
+    "FAQ_Section": [true/false],
+    "Company_Logos": [true/false],
+    "Certification_Info": [true/false],
+    "Program_Details": [true/false],
+    "Career_Services": [true/false],
+    "Learning_Outcomes": [true/false],
+    "Prerequisites": [true/false],
+    "Time_Commitment": [true/false],
+    "Refund_Policy": [true/false],
+    "Contact_Info": [true/false],
+    "Footer_Section": [true/false],
+    "Blog_Articles": [true/false],
+    "Video_Content": [true/false],
+    "Interactive_Demo": [true/false],
+    "Comparison_Chart": [true/false],
+    "Awards_Recognition": [true/false],
+    "Media_Mentions": [true/false],
+    "Community_Section": [true/false],
+    "Resources_Downloads": [true/false]
+  }}
+}}
+
+Replace [true/false] with true if the section exists, false if it doesn't.
+Add any additional sections you identify in the Below_Fold_Sections."""
+
 def _prepare_image(pil_img: Image.Image) -> Image.Image:
     if max(pil_img.size) > MAX_DIM:
         pil_img.thumbnail((MAX_DIM, MAX_DIM), Image.LANCZOS)
@@ -434,6 +512,17 @@ HTML = """
     .expandable:hover { background: #e3f2fd !important; }
     .detail-row { display: none; }
     .detail-content { padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; }
+    
+    /* Prompt editor styles */
+    .prompt-section { background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+    .prompt-section h4 { color: #1976d2; margin-top: 0; }
+    .prompt-tabs { display: flex; gap: 10px; margin-bottom: 15px; }
+    .prompt-tab { padding: 8px 16px; background: #fff; border: 1px solid #1976d2; border-radius: 5px; cursor: pointer; font-size: 14px; }
+    .prompt-tab.active { background: #1976d2; color: white; }
+    .prompt-content { display: none; }
+    .prompt-content.active { display: block; }
+    .prompt-info { background: #bbdefb; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 13px; }
+    .prompt-editor { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -470,10 +559,37 @@ HTML = """
       </div>
       <button type="button" class="add-url-btn" onclick="addUrl()">+ Add Another URL</button>
     </div>
-    <div class="section">
-      <h3>2. Analysis Prompt</h3>
-      <textarea name="prompt" rows="6" placeholder="Enter your analysis prompt...">{{ prompt or default_prompt }}</textarea>
+    
+    <!-- New Prompt Editor Section -->
+    <div class="section prompt-section">
+      <h3>2. Analysis Prompts</h3>
+      <div class="prompt-info">
+        ℹ️ These prompts control how the AI analyzes your landing pages. You can edit them to customize the analysis.
+      </div>
+      
+      <div class="prompt-tabs">
+        <div class="prompt-tab active" onclick="showPromptTab('user-prompt')">User Prompt</div>
+        <div class="prompt-tab" onclick="showPromptTab('structured-prompt')">Structured Prompt (Advanced)</div>
+      </div>
+      
+      <!-- User Prompt Tab -->
+      <div id="user-prompt" class="prompt-content active">
+        <h4>Analysis Requirements</h4>
+        <p>This prompt defines what insights you want from the analysis:</p>
+        <textarea name="prompt" rows="10" class="prompt-editor" placeholder="Enter your analysis prompt...">{{ prompt or default_prompt }}</textarea>
+      </div>
+      
+      <!-- Structured Prompt Tab -->
+      <div id="structured-prompt" class="prompt-content">
+        <h4>JSON Structure Template (Advanced)</h4>
+        <p>This template controls the exact JSON structure returned by the AI. Only modify if you need different data fields:</p>
+        <textarea name="structured_prompt" rows="20" class="prompt-editor">{{ structured_prompt }}</textarea>
+        <div class="prompt-info" style="margin-top: 10px;">
+          ⚠️ <strong>Warning:</strong> Modifying this template may break the analysis tables and reports. Only change if you understand the JSON structure.
+        </div>
+      </div>
     </div>
+    
     <div class="section">
       <h3>3. Manual Screenshots (Optional)</h3>
       <input type="file" name="screenshots" multiple accept=".png,.jpg,.jpeg">
@@ -726,6 +842,22 @@ function toggleDetail(rowId) {
     detailRow.style.display = 'table-row';
   }
 }
+
+function showPromptTab(tabName) {
+  // Hide all prompt tabs
+  const prompts = document.querySelectorAll('.prompt-content');
+  prompts.forEach(prompt => prompt.classList.remove('active'));
+  
+  // Remove active class from all prompt tab buttons
+  const promptTabs = document.querySelectorAll('.prompt-tab');
+  promptTabs.forEach(tab => tab.classList.remove('active'));
+  
+  // Show selected prompt tab
+  document.getElementById(tabName).classList.add('active');
+  
+  // Add active class to clicked button
+  event.target.classList.add('active');
+}
 </script>
 </body>
 </html>
@@ -755,7 +887,7 @@ def extract_site_name(url):
         flushprint(f"extract_site_name error for URL '{url}': {e}")
         return "unknown"
 
-def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, all_providers=None) -> dict:
+def get_multimodal_analysis_from_gemini(page_content: str, image_bytes: bytes, provider_name: str, url: str, prompt_override=None, structured_prompt_override=None, all_providers=None) -> dict:
     flushprint(f"get_multimodal_analysis_from_gemini for {provider_name} at {url}")
     try:
         model = genai.GenerativeModel('gemini-2.5-pro')
@@ -767,77 +899,21 @@ Text Content Preview (first 5000 chars):
 {page_content[:5000] if page_content else "No text content available"}
 """ 
 
-        # The structured prompt that MUST be used
-        structured_prompt = f"""
-Analyze this landing page screenshot for {provider_name} ({url}).
+        # Use the structured prompt template (either default or override)
+        if structured_prompt_override and structured_prompt_override.strip():
+            structured_prompt = structured_prompt_override.format(
+                provider_name=provider_name,
+                url=url,
+                text_content_section=prompt_text_section
+            )
+        else:
+            structured_prompt = DEFAULT_STRUCTURED_PROMPT_TEMPLATE.format(
+                provider_name=provider_name,
+                url=url,
+                text_content_section=prompt_text_section
+            )
 
-INSTRUCTIONS:
-1. Examine the ENTIRE page - both above and below the fold
-2. Identify ALL sections and elements present on the page
-3. Return ONLY a JSON object with the exact structure shown below
-4. No explanations, no markdown formatting, just the JSON
-
-{prompt_text_section}
-
-You MUST return this EXACT JSON structure:
-
-{{
-  "Platform": "{provider_name}",
-  "URL": "{url}",
-  "Main_Offer": "[describe the main product/service offered]",
-  "Primary_CTA": "[primary call-to-action text and location]",
-  "Secondary_CTA": "[secondary CTA if present, or 'None']",
-  "Headline": "[main headline text]",
-  "Subheadline": "[subheadline or tagline text]",
-  "Trust_Elements": "[list trust signals like logos, testimonials, ratings]",
-  "Visual_Design": "[describe design, colors, layout style]",
-  "Above_Fold_Elements": "[list key elements visible without scrolling]",
-  "Pricing_Info": "[pricing details if shown, or 'Not visible']",
-  "Target_Audience": "[identified target audience]",
-  "Unique_Selling_Points": "[key differentiators mentioned]",
-  "Lead_Generation_Type": "[type: email signup, free trial, purchase, etc.]",
-  "Above_Fold_Sections": {{
-    "Hero_Section": [true/false],
-    "Navigation_Bar": [true/false],
-    "Value_Proposition": [true/false],
-    "CTA_Buttons": [true/false],
-    "Trust_Indicators": [true/false],
-    "Social_Proof": [true/false],
-    "Feature_Preview": [true/false]
-  }},
-  "Below_Fold_Sections": {{
-    "Course_Curriculum": [true/false],
-    "Student_Testimonials": [true/false],
-    "Success_Stories": [true/false],
-    "Instructor_Profiles": [true/false],
-    "Pricing_Section": [true/false],
-    "FAQ_Section": [true/false],
-    "Company_Logos": [true/false],
-    "Certification_Info": [true/false],
-    "Program_Details": [true/false],
-    "Career_Services": [true/false],
-    "Learning_Outcomes": [true/false],
-    "Prerequisites": [true/false],
-    "Time_Commitment": [true/false],
-    "Refund_Policy": [true/false],
-    "Contact_Info": [true/false],
-    "Footer_Section": [true/false],
-    "Blog_Articles": [true/false],
-    "Video_Content": [true/false],
-    "Interactive_Demo": [true/false],
-    "Comparison_Chart": [true/false],
-    "Awards_Recognition": [true/false],
-    "Media_Mentions": [true/false],
-    "Community_Section": [true/false],
-    "Resources_Downloads": [true/false]
-  }}
-}}
-
-Replace [true/false] with true if the section exists, false if it doesn't.
-Add any additional sections you identify in the Below_Fold_Sections.
-"""
-
-        # If there's a custom prompt, append it but ensure we still get our structure
+        # If there's a custom analysis prompt, append it
         if prompt_override and prompt_override.strip():
             final_prompt = structured_prompt + f"\n\nAdditional analysis requirements:\n{prompt_override}\n\nREMEMBER: Still return the JSON structure specified above."
         else:
@@ -1185,7 +1261,7 @@ def generate_summary_report(course_data_df: pd.DataFrame, client_name: str, sect
         return f"Error generating summary report: {str(e)}"
 
 # -- Main analyzer function --
-def analyze_landing_pages(landing_pages, prompt_override=None):
+def analyze_landing_pages(landing_pages, prompt_override=None, structured_prompt_override=None):
     flushprint("analyze_landing_pages called")
     all_course_data = []
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1240,7 +1316,7 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                         page_content = ""
                         # Pass landing_pages as the last parameter for context
                         structured_data = get_multimodal_analysis_from_gemini(
-                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, structured_prompt_override, landing_pages
                         )
                         structured_data['Type'] = lp.get('type', 'manual')
                         all_course_data.append(structured_data)
@@ -1273,7 +1349,7 @@ def analyze_landing_pages(landing_pages, prompt_override=None):
                         page_content = page.inner_text('body')
                         # Pass landing_pages as the last parameter for context
                         structured_data = get_multimodal_analysis_from_gemini(
-                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, landing_pages
+                            page_content, image_bytes, lp['name'], lp['url'], prompt_override, structured_prompt_override, landing_pages
                         )
                         structured_data['Type'] = lp.get('type', 'competitor')
                         all_course_data.append(structured_data)
@@ -1381,30 +1457,20 @@ def index():
     error = None
     success = None
     prompt = ''
+    structured_prompt = DEFAULT_STRUCTURED_PROMPT_TEMPLATE
     analysis_data = None
     section_data = None
     analysis_columns = None
     section_columns = None
     client_name = None
     total_sections = 0
-    
-    default_prompt = """
-    Analyze this landing page and provide comprehensive insights about:
-    1. Value proposition and messaging clarity
-    2. Call-to-action effectiveness and placement
-    3. Trust elements and social proof
-    4. Visual design and user experience
-    5. Conversion optimization opportunities
-    6. Competitive positioning elements
-    7. Identify ALL sections on the page (both above and below the fold)
-    8. Compare section presence across competitors to identify gaps and opportunities
-    """
 
     if request.method == "POST":
         try:
             urls = request.form.getlist("urls[]")
             types = request.form.getlist("types[]")
             prompt = request.form.get("prompt", "")
+            structured_prompt = request.form.get("structured_prompt", "")
             
             # Save manual screenshots
             uploaded_files = request.files
@@ -1414,16 +1480,16 @@ def index():
             # Validate inputs
             if not urls or not any(url.strip() for url in urls):
                 error = "Please provide at least one URL"
-                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=default_prompt)
+                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=DEFAULT_ANALYSIS_PROMPT, structured_prompt=structured_prompt)
             
             if len(urls) != len(types):
                 error = "Each URL must have a corresponding type selected"
-                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=default_prompt)
+                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=DEFAULT_ANALYSIS_PROMPT, structured_prompt=structured_prompt)
             
             # Check for at least one client
             if 'client' not in types:
                 error = "Please designate at least one URL as 'Client'"
-                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=default_prompt)
+                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=DEFAULT_ANALYSIS_PROMPT, structured_prompt=structured_prompt)
             
             # Prepare landing pages
             landing_pages = []
@@ -1446,10 +1512,14 @@ def index():
             
             if not landing_pages:
                 error = "No valid URLs to analyze"
-                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=default_prompt)
+                return render_template_string(HTML, error=error, prompt=prompt, default_prompt=DEFAULT_ANALYSIS_PROMPT, structured_prompt=structured_prompt)
             
-            # Run analysis
-            summary, csv_path = analyze_landing_pages(landing_pages, prompt if prompt.strip() else None)
+            # Run analysis with both prompts
+            summary, csv_path = analyze_landing_pages(
+                landing_pages, 
+                prompt if prompt.strip() else None,
+                structured_prompt if structured_prompt.strip() else None
+            )
             success = f"Analysis completed successfully! Processed {len(landing_pages)} landing pages."
             
             # Load the analysis data for display
@@ -1501,7 +1571,8 @@ def index():
         error=error, 
         success=success, 
         prompt=prompt, 
-        default_prompt=default_prompt,
+        default_prompt=DEFAULT_ANALYSIS_PROMPT,
+        structured_prompt=structured_prompt,
         analysis_data=analysis_data,
         section_data=section_data,
         analysis_columns=analysis_columns,
