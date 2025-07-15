@@ -767,6 +767,7 @@ HTML = """
                           {% endfor %}
                         </ul>
                         {% endif %}
+                      </div>
                         {% if row.Below_Fold_Sections %}
                         <p><strong>Below Fold Sections ({{ row.Below_Fold_Sections|length }}):</strong></p>
                         <ul>
@@ -823,7 +824,7 @@ HTML = """
               </table>
             </div>
             
-            {% if section_details %}
+            {% if section_details and section_details|length > 0 %}
             <h3 style="margin-top: 30px;">Section Implementation Details</h3>
             <p style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
               Specific implementations for each standardized section category:
