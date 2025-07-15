@@ -779,32 +779,32 @@ HTML = """
                   <tr>
                     <th style="text-align: left;">Section</th>
                     {% if section_columns %}
-                    {% for col in section_columns[1:] %}
-                    <th>{{ col }}</th>
-                    {% endfor %}
+                      {% for col in section_columns[1:] %}
+                      <th>{{ col }}</th>
+                      {% endfor %}
                     {% endif %}
                   </tr>
                 </thead>
                 <tbody>
                   {% if section_data %}
-                  {% for row in section_data %}
-                  <tr class="{% if '===' in row.Section %}separator{% endif %}">
-                    <td class="section-name">{{ row.Section }}</td>
-                    {% if section_columns %}
-                    {% for col in section_columns[1:] %}
-                    <td>
-                      {% if row[col] == '✅' %}
-                        <span class="yes">✅</span>
-                      {% elif row[col] == '❌' %}
-                        <span class="no">❌</span>
-                      {% else %}
-                        {{ row[col] }}
+                    {% for row in section_data %}
+                    <tr class="{% if '===' in row.Section %}separator{% endif %}">
+                      <td class="section-name">{{ row.Section }}</td>
+                      {% if section_columns %}
+                        {% for col in section_columns[1:] %}
+                        <td>
+                          {% if row[col] == '✅' %}
+                            <span class="yes">✅</span>
+                          {% elif row[col] == '❌' %}
+                            <span class="no">❌</span>
+                          {% else %}
+                            {{ row[col] }}
+                          {% endif %}
+                        </td>
+                        {% endfor %}
                       {% endif %}
-                    </td>
+                    </tr>
                     {% endfor %}
-                    {% endif %}
-                  </tr>
-                  {% endfor %}
                   {% endif %}
                 </tbody>
               </table>
