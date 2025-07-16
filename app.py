@@ -461,8 +461,6 @@ HTML = """
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     .debug-section { margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 5px; }
     .debug-btn { background: #2196f3; color: white; text-decoration: none; padding: 8px 15px; border-radius: 3px; margin-right: 10px; display: inline-block; font-size: 12px; }
-    
-    /* New styles for result tables */
     .results-container { margin-top: 30px; }
     .table-section { margin-bottom: 30px; }
     .table-section h3 { color: #2c3e50; margin-bottom: 15px; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
@@ -472,8 +470,6 @@ HTML = """
     .data-table tr:hover { background: #f8f9fa; }
     .data-table tr:nth-child(even) { background: #f8f9fa; }
     .client-row { background: #e3f2fd !important; font-weight: 500; }
-    
-    /* Section comparison table styles */
     .section-table { width: 100%; border-collapse: collapse; background: white; }
     .section-table th { background: #343a40; color: white; padding: 12px; text-align: center; position: sticky; top: 0; z-index: 10; }
     .section-table td { padding: 8px; border: 1px solid #dee2e6; text-align: center; }
@@ -481,45 +477,25 @@ HTML = """
     .section-table .separator { background: #e9ecef; font-weight: bold; color: #495057; }
     .section-table .yes { color: #28a745; font-size: 20px; }
     .section-table .no { color: #dc3545; font-size: 20px; }
-    
-    /* Scrollable wrapper for wide tables */
     .table-wrapper { overflow-x: auto; max-height: 600px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 5px; }
-    
-    /* Tabs for switching between views */
     .tabs { display: flex; gap: 10px; margin-bottom: 20px; }
     .tab { padding: 10px 20px; background: #e9ecef; border: none; border-radius: 5px 5px 0 0; cursor: pointer; font-weight: 500; }
     .tab.active { background: #007bff; color: white; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
-    
-    /* Key insights section */
     .insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }
     .insight-card { background: white; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; }
     .insight-card h4 { color: #007bff; margin-top: 0; }
     .insight-card .value { font-size: 24px; font-weight: bold; color: #2c3e50; }
-    
-    /* Expandable rows for detailed info */
     .expandable { cursor: pointer; }
     .expandable:hover { background: #e3f2fd !important; }
     .detail-row { display: none; }
     .detail-content { padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; }
-    
-    /* Prompt editor styles */
-    .prompt-section { background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-    .prompt-section h4 { color: #1976d2; margin-top: 0; }
-    .prompt-tabs { display: flex; gap: 10px; margin-bottom: 15px; }
-    .prompt-tab { padding: 8px 16px; background: #fff; border: 1px solid #1976d2; border-radius: 5px; cursor: pointer; font-size: 14px; }
-    .prompt-tab.active { background: #1976d2; color: white; }
-    .prompt-content { display: none; }
-    .prompt-content.active { display: block; }
-    .prompt-info { background: #bbdefb; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 13px; }
-    .prompt-editor { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4; }
   </style>
 </head>
 <body>
 <div class="container">
   <h1>🚀 Dynamic Landing Page Analyzer</h1>
-  
   <!-- Debug Section -->
   <div class="debug-section">
     <h4>🔍 Debug & Database Status</h4>
@@ -532,7 +508,6 @@ HTML = """
     <a href="/debug/last-analysis" class="debug-btn" target="_blank">Debug Last Analysis</a>
     <p><small>If you're getting database errors, click "Create Landing Page Tables" first!</small></p>
   </div>
-
   <form method="POST" enctype="multipart/form-data" id="analysisForm">
     <div class="section">
       <h3>1. Configure URLs</h3>
@@ -550,39 +525,10 @@ HTML = """
       </div>
       <button type="button" class="add-url-btn" onclick="addUrl()">+ Add Another URL</button>
     </div>
-    
-    <!-- New Prompt Editor Section -->
-    <div class="section prompt-section">
-      <h3>2. Analysis Prompts</h3>
-      <div class="prompt-info">
-        ℹ️ These prompts control how the AI analyzes your landing pages. You can edit them to customize the analysis.
-      </div>
-      
-      <div class="prompt-tabs">
-        <div class="prompt-tab active" onclick="showPromptTab('user-prompt')">User Prompt</div>
-        <div class="prompt-tab" onclick="showPromptTab('structured-prompt')">Structured Prompt (Advanced)</div>
-      </div>
-      
-      <!-- User Prompt Tab -->
-      <div id="user-prompt" class="prompt-content active">
-        <h4>Analysis Requirements</h4>
-        <p>This prompt defines what insights you want from the analysis:</p>
-        <textarea name="prompt" rows="10" class="prompt-editor" placeholder="Enter your analysis prompt...">{{ prompt or default_prompt }}</textarea>
-      </div>
-      
-      <!-- Structured Prompt Tab -->
-      <div id="structured-prompt" class="prompt-content">
-        <h4>JSON Structure Template (Advanced)</h4>
-        <p>This template controls the exact JSON structure returned by the AI. Only modify if you need different data fields:</p>
-        <textarea name="structured_prompt" rows="20" class="prompt-editor">{{ structured_prompt }}</textarea>
-        <div class="prompt-info" style="margin-top: 10px;">
-          ⚠️ <strong>Warning:</strong> Modifying this template may break the analysis tables and reports. Only change if you understand the JSON structure.
-          <br><br>
-          ℹ️ <strong>Note:</strong> The AI will identify all sections it finds and group similar ones into general categories. This prevents having too many unique sections while still capturing the specific implementation details for each site.
-        </div>
-      </div>
+    <div class="section">
+      <h3>2. Analysis Prompt</h3>
+      <textarea name="prompt" rows="6" placeholder="Enter your analysis prompt...">{{ prompt or default_prompt }}</textarea>
     </div>
-    
     <div class="section">
       <h3>3. Manual Screenshots (Optional)</h3>
       <input type="file" name="screenshots" multiple accept=".png,.jpg,.jpeg">
@@ -611,11 +557,9 @@ HTML = """
   {% if success %}
     <div class="success">{{ success }}</div>
   {% endif %}
-  
   {% if analysis_data %}
     <div class="result">
       <h2>📊 Analysis Complete!</h2>
-      
       <!-- Download Section -->
       <div class="download-section">
         <h3>Download Results:</h3>
@@ -624,7 +568,6 @@ HTML = """
         <a href="/download/report" class="download-btn">📑 Download Report</a>
         <a href="/download/all" class="download-btn">📦 Download All Files</a>
       </div>
-      
       <!-- Results Display Section -->
       <div class="results-container">
         <!-- Tabs -->
@@ -634,7 +577,6 @@ HTML = """
           <button class="tab" onclick="showTab('sections')">📋 Section Comparison</button>
           <button class="tab" onclick="showTab('report')">📑 Summary Report</button>
         </div>
-        
         <!-- Overview Tab -->
         <div id="overview" class="tab-content active">
           <div class="table-section">
@@ -657,7 +599,6 @@ HTML = """
                 <div class="value">{{ total_sections }}</div>
               </div>
             </div>
-            
             <h3>Quick Comparison</h3>
             <div class="table-wrapper">
               <table class="data-table">
@@ -672,7 +613,6 @@ HTML = """
                   </tr>
                 </thead>
                 <tbody>
-                  {% if analysis_data %}
                   {% for row in analysis_data %}
                   <tr class="{% if row.Type == 'client' %}client-row{% endif %}">
                     <td><strong>{{ row.Platform }}</strong></td>
@@ -683,13 +623,11 @@ HTML = """
                     <td>{{ row.Lead_Generation_Type }}</td>
                   </tr>
                   {% endfor %}
-                  {% endif %}
                 </tbody>
               </table>
             </div>
           </div>
         </div>
-        
         <!-- Detailed Analysis Tab -->
         <div id="analysis" class="tab-content">
           <div class="table-section">
@@ -698,33 +636,24 @@ HTML = """
               <table class="data-table">
                 <thead>
                   <tr>
-                    {% if analysis_columns %}
                     {% for col in analysis_columns %}
                     <th>{{ col }}</th>
                     {% endfor %}
-                    {% endif %}
                   </tr>
                 </thead>
                 <tbody>
-                  {% if analysis_data %}
                   {% for row in analysis_data %}
                   <tr class="expandable" onclick="toggleDetail('detail-{{ loop.index }}')">
-                    {% if analysis_columns %}
                     {% for col in analysis_columns %}
                     <td>
                       {% if col in ['Above_Fold_Sections', 'Below_Fold_Sections'] %}
-                        {% if row[col] and row[col] is iterable and row[col] is not string %}
-                          <em>{{ row[col]|length }} sections - Click to expand</em>
-                        {% else %}
-                          <em>Click to expand</em>
-                        {% endif %}
+                        <em>Click to expand</em>
                       {% else %}
                         {% set val = row[col]|string %}
                         {{ val[:100] if val|length > 100 else val }}
                       {% endif %}
                     </td>
                     {% endfor %}
-                    {% endif %}
                   </tr>
                   <tr id="detail-{{ loop.index }}" class="detail-row">
                     <td colspan="{{ analysis_columns|length }}">
@@ -733,29 +662,6 @@ HTML = """
                         {% for col in analysis_columns %}
                         <p><strong>{{ col }}:</strong> {{ row[col] }}</p>
                         {% endfor %}
-                        {% if row.Above_Fold_Sections %}
-                        <p><strong>Above Fold Sections ({{ row.Above_Fold_Sections|length }}):</strong></p>
-                        <ul>
-                          {% for section in row.Above_Fold_Sections %}
-                          <li>{{ section }}</li>
-                          {% endfor %}
-                        </ul>
-                        {% if row.Section_Details %}
-                        <p><strong>Section Implementation Details:</strong></p>
-                        <ul>
-                          {% for section, details in row.Section_Details.items() %}
-                          <li><strong>{{ section }}:</strong> {{ details }}</li>
-                          {% endfor %}
-                        </ul>
-                        {% endif %}
-                        {% if row.Below_Fold_Sections %}
-                        <p><strong>Below Fold Sections ({{ row.Below_Fold_Sections|length }}):</strong></p>
-                        <ul>
-                          {% for section in row.Below_Fold_Sections %}
-                          <li>{{ section }}</li>
-                          {% endfor %}
-                        </ul>
-                        {% endif %}
                       </div>
                     </td>
                   </tr>
@@ -765,80 +671,42 @@ HTML = """
             </div>
           </div>
         </div>
-        
         <!-- Section Comparison Tab -->
         <div id="sections" class="tab-content">
           <div class="table-section">
             <h3>Section Presence Comparison</h3>
-            <p style="background: #e3f2fd; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
-              ℹ️ Sections are identified dynamically and grouped into general categories to enable meaningful comparison across different websites and industries.
-            </p>
             <div class="table-wrapper">
               <table class="section-table">
                 <thead>
                   <tr>
                     <th style="text-align: left;">Section</th>
-                    {% if section_columns %}
-                      {% for col in section_columns[1:] %}
-                      <th>{{ col }}</th>
-                      {% endfor %}
-                    {% endif %}
-                  </tr>
-                </thead>
-                <tbody>
-                  {% if section_data %}
-                    {% for row in section_data %}
-                    <tr class="{% if '===' in row.Section %}separator{% endif %}">
-                      <td class="section-name">{{ row.Section }}</td>
-                      {% if section_columns %}
-                        {% for col in section_columns[1:] %}
-                        <td>
-                          {% if row[col] == '✅' %}
-                            <span class="yes">✅</span>
-                          {% elif row[col] == '❌' %}
-                            <span class="no">❌</span>
-                          {% else %}
-                            {{ row[col] }}
-                          {% endif %}
-                        </td>
-                        {% endfor %}
-                      {% endif %}
-                    </tr>
+                    {% for col in section_columns[1:] %}
+                    <th>{{ col }}</th>
                     {% endfor %}
-                  {% endif %}
-                </tbody>
-              </table>
-            </div>
-            
-            {% if section_details %}
-            <h3 style="margin-top: 30px;">Section Implementation Details</h3>
-            <p style="background: #f8f9fa; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
-              Specific implementations for each standardized section category:
-            </p>
-            <div class="table-wrapper">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Platform</th>
-                    <th>Section Category</th>
-                    <th>Specific Implementation</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {% for detail in section_details %}
-                  <tr>
-                    <td><strong>{{ detail.Platform }}</strong></td>
-                    <td>{{ detail.Section }}</td>
-                    <td>{{ detail.Implementation }}</td>
+                  {% for row in section_data %}
+                  <tr class="{% if '===' in row.Section %}separator{% endif %}">
+                    <td class="section-name">{{ row.Section }}</td>
+                    {% for col in section_columns[1:] %}
+                    <td>
+                      {% if row[col] == '✅' %}
+                        <span class="yes">✅</span>
+                      {% elif row[col] == '❌' %}
+                        <span class="no">❌</span>
+                      {% else %}
+                        {{ row[col] }}
+                      {% endif %}
+                    </td>
+                    {% endfor %}
                   </tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
-            {% endif %}
           </div>
         </div>
-        
         <!-- Summary Report Tab -->
         <div id="report" class="tab-content">
           <div class="table-section">
@@ -850,7 +718,6 @@ HTML = """
     </div>
   {% endif %}
 </div>
-
 <script>
 function addUrl() {
   const container = document.getElementById('urlInputs');
@@ -868,35 +735,28 @@ function addUrl() {
   `;
   container.appendChild(newRow);
 }
-
 function removeUrl(button) {
   const rows = document.querySelectorAll('.url-row');
   if (rows.length > 1) {
     button.parentElement.remove();
   }
 }
-
 function showLoading() {
   document.getElementById('loading').style.display = 'block';
   document.getElementById('analysisForm').style.display = 'none';
 }
-
 function showTab(tabName) {
   // Hide all tabs
   const tabs = document.querySelectorAll('.tab-content');
   tabs.forEach(tab => tab.classList.remove('active'));
-  
   // Remove active class from all tab buttons
   const tabButtons = document.querySelectorAll('.tab');
   tabButtons.forEach(btn => btn.classList.remove('active'));
-  
   // Show selected tab
   document.getElementById(tabName).classList.add('active');
-  
   // Add active class to clicked button
   event.target.classList.add('active');
 }
-
 function toggleDetail(rowId) {
   const detailRow = document.getElementById(rowId);
   if (detailRow.style.display === 'table-row') {
@@ -905,27 +765,10 @@ function toggleDetail(rowId) {
     detailRow.style.display = 'table-row';
   }
 }
-
-function showPromptTab(tabName) {
-  // Hide all prompt tabs
-  const prompts = document.querySelectorAll('.prompt-content');
-  prompts.forEach(prompt => prompt.classList.remove('active'));
-  
-  // Remove active class from all prompt tab buttons
-  const promptTabs = document.querySelectorAll('.prompt-tab');
-  promptTabs.forEach(tab => tab.classList.remove('active'));
-  
-  // Show selected prompt tab
-  document.getElementById(tabName).classList.add('active');
-  
-  // Add active class to clicked button
-  event.target.classList.add('active');
-}
 </script>
 </body>
 </html>
 """
-
 def save_manual_screenshots(files):
     uploaded_names = []
     flushprint("save_manual_screenshots called")
